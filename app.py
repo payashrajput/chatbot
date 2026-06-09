@@ -94,7 +94,7 @@ with st.sidebar:
 def load_model(temp, max_new_tokens):
 
     llm = HuggingFaceEndpoint(
-        repo_id="HuggingFaceH4/zephyr-7b-beta",
+        repo_id="google/flan-t5-large",
         task="text-generation",
         huggingfacehub_api_token=HF_TOKEN,
         temperature=temp,
