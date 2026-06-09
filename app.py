@@ -1,21 +1,16 @@
 import os
 import time
 import streamlit as st
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_huggingface import HuggingFaceEndpoint
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 
-# --------------------------------------------------
-# Page Config
-# --------------------------------------------------
 st.set_page_config(
     page_title="Payash's Chatbot",
     page_icon="🤖",
     layout="wide"
 )
 
-# --------------------------------------------------
-# Custom CSS
-# --------------------------------------------------
 st.markdown("""
 <style>
 .main { background-color: #0e1117; }
@@ -43,16 +38,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --------------------------------------------------
-# Title
-# --------------------------------------------------
 st.markdown(
     '<div class="title">🤖 Payash Personal Assistant</div>',
     unsafe_allow_html=True
 )
 
 # --------------------------------------------------
-# API Key Check
+# API Key
 # --------------------------------------------------
 HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 if not HF_TOKEN:
@@ -86,7 +78,23 @@ with st.sidebar:
     st.markdown("**Messages:** " + str(len(st.session_state.get("messages", []))))
 
 # --------------------------------------------------
-# Load Model
+# Prompt Template
+# --------------------------------------------------
+template = """You are Payash, a smart and friendly personal assistant. Answer clearly and helpfully.
+
+Conversation History:
+{history}
+
+User: {input}
+Assistant:"""
+
+prompt_template = PromptTemplate(
+    input_variables=["history", "input"],
+    template=template
+)
+
+# --------------------------------------------------
+# Load Model (LangChain only, no ChatHuggingFace)
 # --------------------------------------------------
 @st.cache_resource
 def load_model(repo_id, temp, max_new_tokens):
@@ -95,12 +103,13 @@ def load_model(repo_id, temp, max_new_tokens):
         task="text-generation",
         huggingfacehub_api_token=HF_TOKEN,
         temperature=temp,
-        max_new_tokens=max_new_tokens
+        max_new_tokens=max_new_tokens,
+        do_sample=True
     )
-    return ChatHuggingFace(llm=llm)
+    return LLMChain(llm=llm, prompt=prompt_template)
 
 try:
-    model = load_model(model_choice, temperature, max_tokens)
+    chain = load_model(model_choice, temperature, max_tokens)
 except Exception as e:
     st.error(f"❌ Model loading failed: {e}")
     st.stop()
@@ -124,10 +133,7 @@ for msg in st.session_state.messages:
 prompt = st.chat_input("Ask me anything...")
 
 if prompt:
-    st.session_state.messages.append({
-        "role": "user",
-        "content": prompt
-    })
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -137,18 +143,23 @@ if prompt:
         placeholder.markdown("⏳ Thinking...")
 
         try:
-            # Build LangChain message history
-            lc_messages = [
-                SystemMessage(content="You are Payash, a smart and friendly personal assistant.")
-            ]
-            for msg in st.session_state.messages:
-                if msg["role"] == "user":
-                    lc_messages.append(HumanMessage(content=msg["content"]))
-                else:
-                    lc_messages.append(AIMessage(content=msg["content"]))
+            # Build history string from past messages
+            history_str = ""
+            for msg in st.session_state.messages[:-1]:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                history_str += f"{role}: {msg['content']}\n"
 
-            response = model.invoke(lc_messages)
-            answer = response.content
+            # Invoke LangChain LLMChain
+            response = chain.invoke({
+                "history": history_str,
+                "input": prompt
+            })
+
+            answer = response.get("text", "").strip()
+
+            # Clean up if model echoes prompt
+            if "Assistant:" in answer:
+                answer = answer.split("Assistant:")[-1].strip()
 
             # Typewriter effect
             typed_text = ""
@@ -161,7 +172,4 @@ if prompt:
             answer = f"❌ Error: {str(e)}"
             placeholder.error(answer)
 
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": answer
-    })
+    st.session_state.messages.append({"role": "assistant", "content": answer})
