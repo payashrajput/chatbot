@@ -92,7 +92,7 @@ def load_model(temp, max_new_tokens):
         repo_id="deepseek-ai/DeepSeek-V4-Pro",
         provider="hf-inference",
         task="text-generation",
-        huggingfacehub_api_token=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,
+        huggingfacehub_api_token="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",
         temperature=temp,
         max_new_tokens=max_new_tokens
     )
