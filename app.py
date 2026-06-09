@@ -102,7 +102,7 @@ with st.sidebar:
 def load_model(temp, max_tokens):
 
     llm = HuggingFaceEndpoint(
-        repo_id="microsoft/Phi-3-mini-4k-instruct",
+        repo_id="deepseek-ai/DeepSeek-V4-Pro",
         task="text-generation",
         temperature=temp,
         max_new_tokens=max_tokens
