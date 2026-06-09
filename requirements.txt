@@ -1,2 +1,4 @@
 streamlit
-anthropic
+langchain
+langchain-huggingface
+huggingface-hub
