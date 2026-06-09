@@ -1,7 +1,7 @@
 import os
 import time
+import requests
 import streamlit as st
-from langchain_huggingface import HuggingFaceEndpoint
 
 st.set_page_config(
     page_title="Payash Personal Assistant",
@@ -39,21 +39,26 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-@st.cache_resource
-def load_model(temp, max_new_tokens):
-    return HuggingFaceEndpoint(
-        repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        task="conversational",
-        huggingfacehub_api_token=HF_TOKEN,
-        temperature=temp,
-        max_new_tokens=max_new_tokens
-    )
+def query_model(prompt, temperature, max_tokens):
+    API_URL = "https://api-inference.huggingface.co/models/TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "temperature": temperature,
+            "max_new_tokens": max_tokens,
+            "return_full_text": False
+        }
+    }
+    response = requests.post(API_URL, headers=headers, json=payload)
+    result = response.json()
 
-try:
-    model = load_model(temperature, max_tokens)
-except Exception as e:
-    st.error(f"Model loading failed:\n\n{e}")
-    st.stop()
+    if isinstance(result, list) and len(result) > 0:
+        return result[0].get("generated_text", "No response received.")
+    elif isinstance(result, dict) and "error" in result:
+        return f"API Error: {result['error']}"
+    else:
+        return str(result)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -82,13 +87,7 @@ if prompt:
 
             full_prompt = f"{history_text}User: {prompt}\nAssistant:"
 
-            answer = model.invoke(full_prompt)
-
-            if isinstance(answer, dict):
-                answer = answer.get("generated_text") or answer.get("text") or str(answer)
-
-            if "Assistant:" in answer:
-                answer = answer.split("Assistant:")[-1].strip()
+            answer = query_model(full_prompt, temperature, max_tokens)
 
             text = ""
             for ch in answer:
