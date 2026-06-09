@@ -7,9 +7,9 @@ from langchain_huggingface import (
     ChatHuggingFace
 )
 
-# --------------------------------------------------
+# ----------------------------------
 # PAGE CONFIG
-# --------------------------------------------------
+# ----------------------------------
 
 st.set_page_config(
     page_title="Payash Personal Assistant",
@@ -17,35 +17,40 @@ st.set_page_config(
     layout="wide"
 )
 
-# --------------------------------------------------
+# ----------------------------------
 # TOKEN CHECK
-# --------------------------------------------------
+# ----------------------------------
 
 HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
 if not HF_TOKEN:
-    st.error("HUGGINGFACEHUB_API_TOKEN not found in environment variables.")
+    st.error(
+        "HUGGINGFACEHUB_API_TOKEN not found.\n\n"
+        "Add it in Render Environment Variables."
+    )
     st.stop()
 
-# --------------------------------------------------
-# CSS
-# --------------------------------------------------
+# ----------------------------------
+# CUSTOM CSS
+# ----------------------------------
 
 st.markdown("""
 <style>
-.main{
-    background-color:#0e1117;
+
+.stApp {
+    background-color: #0e1117;
 }
 
-.title{
-    text-align:center;
-    font-size:42px;
-    font-weight:bold;
-    background:linear-gradient(90deg,#00d4ff,#7d5fff);
-    -webkit-background-clip:text;
-    -webkit-text-fill-color:transparent;
-    margin-bottom:20px;
+.title {
+    text-align: center;
+    font-size: 42px;
+    font-weight: bold;
+    background: linear-gradient(90deg,#00d4ff,#7d5fff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 20px;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,43 +59,42 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# --------------------------------------------------
+# ----------------------------------
 # SIDEBAR
-# --------------------------------------------------
+# ----------------------------------
 
 with st.sidebar:
 
-    st.header("Settings")
+    st.header("⚙ Settings")
 
     temperature = st.slider(
         "Temperature",
         0.0,
         2.0,
-        1.0,
+        0.7,
         0.1
     )
 
     max_tokens = st.slider(
         "Max Tokens",
         128,
-        4096,
-        1024
+        2048,
+        512
     )
 
-    if st.button("Clear Chat"):
+    if st.button("🗑 Clear Chat"):
         st.session_state.messages = []
         st.rerun()
 
-# --------------------------------------------------
+# ----------------------------------
 # MODEL
-# --------------------------------------------------
+# ----------------------------------
 
 @st.cache_resource
 def load_model(temp, max_new_tokens):
 
     llm = HuggingFaceEndpoint(
-        repo_id="deepseek-ai/DeepSeek-V4-Pro",
-        provider="hf-inference",
+        repo_id="HuggingFaceH4/zephyr-7b-beta",
         task="text-generation",
         huggingfacehub_api_token=HF_TOKEN,
         temperature=temp,
@@ -109,25 +113,25 @@ except Exception as e:
     st.error(f"Model loading failed:\n\n{e}")
     st.stop()
 
-# --------------------------------------------------
-# CHAT MEMORY
-# --------------------------------------------------
+# ----------------------------------
+# CHAT HISTORY
+# ----------------------------------
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --------------------------------------------------
-# SHOW HISTORY
-# --------------------------------------------------
+# ----------------------------------
+# DISPLAY HISTORY
+# ----------------------------------
 
 for msg in st.session_state.messages:
 
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --------------------------------------------------
+# ----------------------------------
 # USER INPUT
-# --------------------------------------------------
+# ----------------------------------
 
 prompt = st.chat_input("Ask me anything...")
 
@@ -160,11 +164,11 @@ if prompt:
             for ch in answer:
                 text += ch
                 placeholder.markdown(text)
-                time.sleep(0.003)
+                time.sleep(0.002)
 
         except Exception as e:
 
-            answer = f"Error: {e}"
+            answer = f"❌ Error: {e}"
             placeholder.error(answer)
 
     st.session_state.messages.append(
