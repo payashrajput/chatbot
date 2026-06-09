@@ -92,15 +92,13 @@ with st.sidebar:
 
 @st.cache_resource
 def load_model(temp, max_new_tokens):
-
     llm = HuggingFaceEndpoint(
-        repo_id="google/flan-t5-large",
+        repo_id="HuggingFaceH4/zephyr-7b-beta",
         task="text-generation",
         huggingfacehub_api_token=HF_TOKEN,
         temperature=temp,
         max_new_tokens=max_new_tokens
     )
-
     return ChatHuggingFace(llm=llm)
 
 try:
