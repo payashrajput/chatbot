@@ -73,6 +73,9 @@ with st.sidebar:
         [
             "mistralai/Mistral-7B-Instruct-v0.3",
             "microsoft/Phi-3-mini-4k-instruct",
+            " 
+Models
+google/gemma-4-31B-it",
             "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
         ]
     )
