@@ -43,23 +43,15 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# --------------------------------------------------
-# API Key
-# --------------------------------------------------
 HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 if not HF_TOKEN:
-    st.error("⚠️ HUGGINGFACEHUB_API_TOKEN not found. Add it in Streamlit Secrets.")
+    st.error("HUGGINGFACEHUB_API_TOKEN not found. Add it in Streamlit Secrets.")
     st.stop()
 
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
 with st.sidebar:
     st.title("⚙ Settings")
-
     temperature = st.slider("Temperature", 0.1, 2.0, 0.7, 0.1)
     max_tokens = st.slider("Max Tokens", 128, 2048, 512)
-
     model_choice = st.selectbox(
         "Choose Model",
         [
@@ -68,34 +60,25 @@ with st.sidebar:
             "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
         ]
     )
-
     st.divider()
-
     if st.button("🗑 Clear Chat"):
         st.session_state.messages = []
         st.rerun()
-
     st.markdown("**Messages:** " + str(len(st.session_state.get("messages", []))))
 
-# --------------------------------------------------
-# Prompt Template
-# --------------------------------------------------
-template = """You are Payash, a smart and friendly personal assistant. Answer clearly and helpfully.
-
-Conversation History:
-{history}
-
-User: {input}
-Assistant:"""
+TEMPLATE = (
+    "You are Payash, a smart and friendly personal assistant. "
+    "Answer clearly and helpfully.\n\n"
+    "Conversation History:\n{history}\n\n"
+    "User: {input}\n"
+    "Assistant:"
+)
 
 prompt_template = PromptTemplate(
     input_variables=["history", "input"],
-    template=template
+    template=TEMPLATE
 )
 
-# --------------------------------------------------
-# Load Model (LangChain only, no ChatHuggingFace)
-# --------------------------------------------------
 @st.cache_resource
 def load_model(repo_id, temp, max_new_tokens):
     llm = HuggingFaceEndpoint(
@@ -111,25 +94,16 @@ def load_model(repo_id, temp, max_new_tokens):
 try:
     chain = load_model(model_choice, temperature, max_tokens)
 except Exception as e:
-    st.error(f"❌ Model loading failed: {e}")
+    st.error(f"Model loading failed: {e}")
     st.stop()
 
-# --------------------------------------------------
-# Chat Memory
-# --------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --------------------------------------------------
-# Display History
-# --------------------------------------------------
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --------------------------------------------------
-# User Input
-# --------------------------------------------------
 prompt = st.chat_input("Ask me anything...")
 
 if prompt:
@@ -143,13 +117,11 @@ if prompt:
         placeholder.markdown("⏳ Thinking...")
 
         try:
-            # Build history string from past messages
             history_str = ""
             for msg in st.session_state.messages[:-1]:
                 role = "User" if msg["role"] == "user" else "Assistant"
                 history_str += f"{role}: {msg['content']}\n"
 
-            # Invoke LangChain LLMChain
             response = chain.invoke({
                 "history": history_str,
                 "input": prompt
@@ -157,11 +129,9 @@ if prompt:
 
             answer = response.get("text", "").strip()
 
-            # Clean up if model echoes prompt
             if "Assistant:" in answer:
                 answer = answer.split("Assistant:")[-1].strip()
 
-            # Typewriter effect
             typed_text = ""
             for char in answer:
                 typed_text += char
@@ -169,7 +139,7 @@ if prompt:
                 time.sleep(0.005)
 
         except Exception as e:
-            answer = f"❌ Error: {str(e)}"
+            answer = f"Error: {str(e)}"
             placeholder.error(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
