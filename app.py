@@ -1,145 +1,231 @@
-import os
 import time
 import streamlit as st
-from langchain_huggingface import HuggingFaceEndpoint
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
+
+from langchain_huggingface import (
+    HuggingFaceEndpoint,
+    ChatHuggingFace
+)
+
+from langchain_core.messages import (
+    SystemMessage,
+    HumanMessage,
+    AIMessage
+)
+
+# --------------------------------------------------
+# PAGE CONFIG
+# --------------------------------------------------
 
 st.set_page_config(
-    page_title="Payash's Chatbot",
+    page_title="Payash AI ChatBox",
     page_icon="🤖",
     layout="wide"
 )
 
+# --------------------------------------------------
+# CUSTOM CSS
+# --------------------------------------------------
+
 st.markdown("""
 <style>
-.main { background-color: #0e1117; }
-.stChatMessage { border-radius: 15px; padding: 10px; }
-.user-msg {
-    background: #1f6feb;
-    padding: 12px;
-    border-radius: 15px;
-    color: white;
+
+.main {
+    background-color: #0e1117;
 }
-.bot-msg {
-    background: #262730;
-    padding: 12px;
-    border-radius: 15px;
-    color: white;
-}
+
 .title {
-    text-align: center;
-    font-size: 40px;
-    font-weight: bold;
-    background: linear-gradient(90deg, #00d4ff, #7d5fff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    text-align:center;
+    font-size:40px;
+    font-weight:bold;
+    background: linear-gradient(90deg,#00d4ff,#7d5fff);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
+# --------------------------------------------------
+# TITLE
+# --------------------------------------------------
+
 st.markdown(
-    '<div class="title">🤖 Payash Personal Assistant</div>',
+    '<div class="title">🤖 Payash AI ChatBox</div>',
     unsafe_allow_html=True
 )
 
-HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-if not HF_TOKEN:
-    st.error("HUGGINGFACEHUB_API_TOKEN not found. Add it in Streamlit Secrets.")
-    st.stop()
+# --------------------------------------------------
+# SIDEBAR
+# --------------------------------------------------
 
 with st.sidebar:
+
     st.title("⚙ Settings")
-    temperature = st.slider("Temperature", 0.1, 2.0, 0.7, 0.1)
-    max_tokens = st.slider("Max Tokens", 128, 2048, 512)
-    model_choice = st.selectbox(
+
+    model_name = st.selectbox(
         "Choose Model",
         [
-            "mistralai/Mistral-7B-Instruct-v0.3",
-            "microsoft/Phi-3-mini-4k-instruct",
-            "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            "deepseek-ai/DeepSeek-V4-Pro",
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "Qwen/Qwen2.5-72B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.3"
         ]
     )
-    st.divider()
+
+    temperature = st.slider(
+        "Temperature",
+        min_value=0.0,
+        max_value=2.0,
+        value=1.0,
+        step=0.1
+    )
+
+    max_new_tokens = st.slider(
+        "Max Tokens",
+        min_value=128,
+        max_value=4096,
+        value=1024
+    )
+
     if st.button("🗑 Clear Chat"):
         st.session_state.messages = []
         st.rerun()
-    st.markdown("**Messages:** " + str(len(st.session_state.get("messages", []))))
 
-TEMPLATE = (
-    "You are Payash, a smart and friendly personal assistant. "
-    "Answer clearly and helpfully.\n\n"
-    "Conversation History:\n{history}\n\n"
-    "User: {input}\n"
-    "Assistant:"
-)
+# --------------------------------------------------
+# LOAD MODEL
+# --------------------------------------------------
 
-prompt_template = PromptTemplate(
-    input_variables=["history", "input"],
-    template=TEMPLATE
-)
+@st.cache_resource(show_spinner=False)
+def load_model(repo_id, temp, max_tokens):
 
-@st.cache_resource
-def load_model(repo_id, temp, max_new_tokens):
     llm = HuggingFaceEndpoint(
         repo_id=repo_id,
         task="text-generation",
-        huggingfacehub_api_token=HF_TOKEN,
         temperature=temp,
-        max_new_tokens=max_new_tokens,
-        do_sample=True
+        max_new_tokens=max_tokens
     )
-    return LLMChain(llm=llm, prompt=prompt_template)
 
-try:
-    chain = load_model(model_choice, temperature, max_tokens)
-except Exception as e:
-    st.error(f"Model loading failed: {e}")
-    st.stop()
+    return ChatHuggingFace(llm=llm)
+
+model = load_model(
+    model_name,
+    temperature,
+    max_new_tokens
+)
+
+# --------------------------------------------------
+# CHAT MEMORY
+# --------------------------------------------------
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+# --------------------------------------------------
+# DISPLAY CHAT HISTORY
+# --------------------------------------------------
+
+for message in st.session_state.messages:
+
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# --------------------------------------------------
+# CHAT INPUT
+# --------------------------------------------------
 
 prompt = st.chat_input("Ask me anything...")
 
 if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # Save user message
+
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": prompt
+        }
+    )
 
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # --------------------------------------------------
+    # BUILD CONVERSATION HISTORY
+    # --------------------------------------------------
+
+    conversation = [
+        SystemMessage(
+            content="""
+You are Payash AI.
+
+You are a helpful, intelligent, and friendly assistant.
+
+Always use previous messages in the conversation
+to answer follow-up questions.
+"""
+        )
+    ]
+
+    for msg in st.session_state.messages:
+
+        if msg["role"] == "user":
+
+            conversation.append(
+                HumanMessage(
+                    content=msg["content"]
+                )
+            )
+
+        elif msg["role"] == "assistant":
+
+            conversation.append(
+                AIMessage(
+                    content=msg["content"]
+                )
+            )
+
+    # --------------------------------------------------
+    # GENERATE RESPONSE
+    # --------------------------------------------------
+
     with st.chat_message("assistant"):
+
         placeholder = st.empty()
         placeholder.markdown("⏳ Thinking...")
 
         try:
-            history_str = ""
-            for msg in st.session_state.messages[:-1]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                history_str += f"{role}: {msg['content']}\n"
 
-            response = chain.invoke({
-                "history": history_str,
-                "input": prompt
-            })
+            response = model.invoke(conversation)
 
-            answer = response.get("text", "").strip()
-
-            if "Assistant:" in answer:
-                answer = answer.split("Assistant:")[-1].strip()
+            if hasattr(response, "content"):
+                answer = response.content
+            else:
+                answer = str(response)
 
             typed_text = ""
+
             for char in answer:
+
                 typed_text += char
-                placeholder.markdown(typed_text)
-                time.sleep(0.005)
+
+                placeholder.markdown(
+                    typed_text
+                )
+
+                time.sleep(0.002)
 
         except Exception as e:
-            answer = f"Error: {str(e)}"
+
+            answer = f"❌ Error: {str(e)}"
             placeholder.error(answer)
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    # --------------------------------------------------
+    # SAVE ASSISTANT MESSAGE
+    # --------------------------------------------------
+
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": answer
+        }
+    )
