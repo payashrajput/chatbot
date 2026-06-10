@@ -1,3 +1,5 @@
+import os
+import json
 import time
 import streamlit as st
 
@@ -12,19 +14,21 @@ from langchain_core.messages import (
     AIMessage
 )
 
-# --------------------------------------------------
-# PAGE CONFIG
-# --------------------------------------------------
+# ==================================================
+# CONFIG
+# ==================================================
 
 st.set_page_config(
-    page_title="Payash AI ChatBox",
+    page_title="Payash AI",
     page_icon="🤖",
     layout="wide"
 )
 
-# --------------------------------------------------
-# CUSTOM CSS
-# --------------------------------------------------
+HISTORY_FILE = "chat_history.json"
+
+# ==================================================
+# CSS
+# ==================================================
 
 st.markdown("""
 <style>
@@ -35,28 +39,74 @@ st.markdown("""
 
 .title {
     text-align:center;
-    font-size:40px;
+    font-size:42px;
     font-weight:bold;
     background: linear-gradient(90deg,#00d4ff,#7d5fff);
     -webkit-background-clip:text;
     -webkit-text-fill-color:transparent;
+    margin-bottom:20px;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
-# --------------------------------------------------
+# ==================================================
 # TITLE
-# --------------------------------------------------
+# ==================================================
 
 st.markdown(
     '<div class="title">🤖 Payash AI ChatBox</div>',
     unsafe_allow_html=True
 )
 
-# --------------------------------------------------
+# ==================================================
+# SESSION STATE
+# ==================================================
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "chat_history" not in st.session_state:
+
+    if os.path.exists(HISTORY_FILE):
+
+        try:
+            with open(
+                HISTORY_FILE,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
+                st.session_state.chat_history = json.load(f)
+
+        except Exception:
+            st.session_state.chat_history = []
+
+    else:
+        st.session_state.chat_history = []
+
+# ==================================================
+# SAVE HISTORY
+# ==================================================
+
+def save_history():
+
+    with open(
+        HISTORY_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            st.session_state.chat_history,
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
+
+# ==================================================
 # SIDEBAR
-# --------------------------------------------------
+# ==================================================
 
 with st.sidebar:
 
@@ -74,35 +124,98 @@ with st.sidebar:
 
     temperature = st.slider(
         "Temperature",
-        min_value=0.0,
-        max_value=2.0,
-        value=1.0,
-        step=0.1
+        0.0,
+        2.0,
+        1.0,
+        0.1
     )
 
     max_new_tokens = st.slider(
         "Max Tokens",
-        min_value=128,
-        max_value=4096,
-        value=1024
+        128,
+        4096,
+        1024
     )
 
+    # --------------------------------------------
+    # Clear Chat
+    # --------------------------------------------
+
     if st.button("🗑 Clear Chat"):
+
+        if st.session_state.messages:
+
+            first_user_msg = "New Chat"
+
+            for msg in st.session_state.messages:
+
+                if msg["role"] == "user":
+
+                    first_user_msg = (
+                        msg["content"]
+                        .replace("\n", " ")
+                        [:50]
+                    )
+
+                    break
+
+            st.session_state.chat_history.append(
+                {
+                    "title": first_user_msg,
+                    "messages":
+                        st.session_state.messages.copy()
+                }
+            )
+
+            save_history()
+
         st.session_state.messages = []
+
         st.rerun()
 
-# --------------------------------------------------
-# LOAD MODEL
-# --------------------------------------------------
+    st.divider()
+
+    st.subheader("📜 Chat History")
+
+    if not st.session_state.chat_history:
+
+        st.caption("No saved chats yet.")
+
+    else:
+
+        for idx, chat in enumerate(
+            reversed(
+                st.session_state.chat_history
+            )
+        ):
+
+            if st.button(
+                f"💬 {chat['title']}",
+                key=f"history_{idx}"
+            ):
+
+                st.session_state.messages = (
+                    chat["messages"].copy()
+                )
+
+                st.rerun()
+
+# ==================================================
+# MODEL
+# ==================================================
 
 @st.cache_resource(show_spinner=False)
-def load_model(repo_id, temp, max_tokens):
+def load_model(
+    repo_id,
+    temperature,
+    max_new_tokens
+):
 
     llm = HuggingFaceEndpoint(
         repo_id=repo_id,
         task="text-generation",
-        temperature=temp,
-        max_new_tokens=max_tokens
+        temperature=temperature,
+        max_new_tokens=max_new_tokens
     )
 
     return ChatHuggingFace(llm=llm)
@@ -113,31 +226,32 @@ model = load_model(
     max_new_tokens
 )
 
-# --------------------------------------------------
-# CHAT MEMORY
-# --------------------------------------------------
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# --------------------------------------------------
-# DISPLAY CHAT HISTORY
-# --------------------------------------------------
+# ==================================================
+# DISPLAY CHAT
+# ==================================================
 
 for message in st.session_state.messages:
 
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    with st.chat_message(
+        message["role"]
+    ):
+        st.markdown(
+            message["content"]
+        )
 
-# --------------------------------------------------
-# CHAT INPUT
-# --------------------------------------------------
+# ==================================================
+# USER INPUT
+# ==================================================
 
-prompt = st.chat_input("Ask me anything...")
+prompt = st.chat_input(
+    "Ask me anything..."
+)
 
 if prompt:
 
-    # Save user message
+    # ------------------------------------------
+    # Save User Message
+    # ------------------------------------------
 
     st.session_state.messages.append(
         {
@@ -149,19 +263,21 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # --------------------------------------------------
-    # BUILD CONVERSATION HISTORY
-    # --------------------------------------------------
+    # ------------------------------------------
+    # Build Conversation
+    # ------------------------------------------
 
     conversation = [
+
         SystemMessage(
             content="""
 You are Payash AI.
 
-You are a helpful, intelligent, and friendly assistant.
+You are a helpful AI assistant.
 
-Always use previous messages in the conversation
-to answer follow-up questions.
+Remember previous messages and
+answer follow-up questions using
+conversation history.
 """
         )
     ]
@@ -176,7 +292,7 @@ to answer follow-up questions.
                 )
             )
 
-        elif msg["role"] == "assistant":
+        else:
 
             conversation.append(
                 AIMessage(
@@ -184,23 +300,34 @@ to answer follow-up questions.
                 )
             )
 
-    # --------------------------------------------------
-    # GENERATE RESPONSE
-    # --------------------------------------------------
+    # ------------------------------------------
+    # Generate Response
+    # ------------------------------------------
 
-    with st.chat_message("assistant"):
+    with st.chat_message(
+        "assistant"
+    ):
 
         placeholder = st.empty()
-        placeholder.markdown("⏳ Thinking...")
+
+        placeholder.markdown(
+            "⏳ Thinking..."
+        )
 
         try:
 
-            response = model.invoke(conversation)
+            response = model.invoke(
+                conversation
+            )
 
-            if hasattr(response, "content"):
-                answer = response.content
-            else:
-                answer = str(response)
+            answer = (
+                response.content
+                if hasattr(
+                    response,
+                    "content"
+                )
+                else str(response)
+            )
 
             typed_text = ""
 
@@ -216,12 +343,17 @@ to answer follow-up questions.
 
         except Exception as e:
 
-            answer = f"❌ Error: {str(e)}"
-            placeholder.error(answer)
+            answer = (
+                f"❌ Error: {str(e)}"
+            )
 
-    # --------------------------------------------------
-    # SAVE ASSISTANT MESSAGE
-    # --------------------------------------------------
+            placeholder.error(
+                answer
+            )
+
+    # ------------------------------------------
+    # Save Assistant Response
+    # ------------------------------------------
 
     st.session_state.messages.append(
         {
@@ -229,3 +361,4 @@ to answer follow-up questions.
             "content": answer
         }
     )
+    
