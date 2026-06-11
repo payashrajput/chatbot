@@ -19,13 +19,6 @@ st.set_page_config(
 st.title("🤖 KITTU AI")
 
 # ==================================================
-# HUGGINGFACE TOKEN (REQUIRED FOR 401 FIX)
-# ==================================================
-
-if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
-    os.environ["HUGGINGFACEHUB_API_TOKEN"] = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
-
-# ==================================================
 # SESSION STATE
 # ==================================================
 
@@ -55,7 +48,7 @@ def save_history():
         json.dump(st.session_state.chat_history, f, indent=2)
 
 # ==================================================
-# SIDEBAR (YOUR MODELS UNCHANGED)
+# SIDEBAR
 # ==================================================
 
 with st.sidebar:
@@ -84,8 +77,6 @@ with st.sidebar:
     st.subheader("📜 Chat History")
 
     for i, chat in enumerate(reversed(st.session_state.chat_history)):
-
-        # FIXED: no KeyError anymore
         title = chat.get("title", "New Chat")
 
         if st.button(f"💬 {title}", key=f"history_{i}"):
@@ -93,7 +84,7 @@ with st.sidebar:
             st.rerun()
 
 # ==================================================
-# MODEL (UNCHANGED LOGIC)
+# MODEL
 # ==================================================
 
 @st.cache_resource(show_spinner=False)
@@ -111,7 +102,7 @@ def load_model(repo_id, temperature, max_new_tokens):
 model = load_model(model_name, temperature, max_new_tokens)
 
 # ==================================================
-# DISPLAY CHAT
+# SHOW CHAT HISTORY
 # ==================================================
 
 for msg in st.session_state.messages:
@@ -119,18 +110,24 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # ==================================================
-# INPUT
+# INPUT (FIXED FLOW - IMPORTANT PART)
 # ==================================================
 
 prompt = st.chat_input("Ask me anything...")
 
 if prompt:
 
+    # 1. Save user message
     st.session_state.messages.append({
         "role": "user",
         "content": prompt
     })
 
+    # 2. SHOW USER MESSAGE INSTANTLY (FIX FOR YOUR ISSUE)
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # 3. Build conversation
     conversation = [
         SystemMessage(content="You are KITTU AI, a helpful assistant.")
     ]
@@ -141,6 +138,7 @@ if prompt:
         else:
             conversation.append(AIMessage(content=m["content"]))
 
+    # 4. AI RESPONSE
     with st.chat_message("assistant"):
         placeholder = st.empty()
         placeholder.markdown("⏳ Thinking...")
@@ -159,12 +157,13 @@ if prompt:
             answer = f"❌ Error: {e}"
             placeholder.error(answer)
 
+    # 5. SAVE AI MESSAGE
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer
     })
 
-    # SAVE HISTORY SAFE
+    # 6. SAVE HISTORY SAFELY
     first_user = "New Chat"
     for m in st.session_state.messages:
         if m["role"] == "user":
