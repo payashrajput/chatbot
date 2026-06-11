@@ -34,6 +34,7 @@ if "chat_history" not in st.session_state:
 
 HISTORY_FILE = "chat_history.json"
 
+# load history safely
 if os.path.exists(HISTORY_FILE):
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -68,8 +69,26 @@ with st.sidebar:
     temperature = st.slider("Temperature", 0.0, 2.0, 1.0, 0.1)
     max_new_tokens = st.slider("Max Tokens", 128, 4096, 1024)
 
+    # ==================================================
+    # CLEAR CURRENT CHAT
+    # ==================================================
+
     if st.button("🗑 Clear Chat"):
         st.session_state.messages = []
+        st.rerun()
+
+    # ==================================================
+    # CLEAR FULL CHAT HISTORY (NEW FEATURE)
+    # ==================================================
+
+    if st.button("🧹 Clear Chat History"):
+        st.session_state.chat_history = []
+
+        # also clear file
+        if os.path.exists(HISTORY_FILE):
+            os.remove(HISTORY_FILE)
+
+        st.success("Chat history cleared!")
         st.rerun()
 
     st.divider()
@@ -102,7 +121,7 @@ def load_model(repo_id, temperature, max_new_tokens):
 model = load_model(model_name, temperature, max_new_tokens)
 
 # ==================================================
-# SHOW CHAT HISTORY
+# DISPLAY CHAT
 # ==================================================
 
 for msg in st.session_state.messages:
@@ -110,24 +129,22 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # ==================================================
-# INPUT (FIXED FLOW - IMPORTANT PART)
+# INPUT
 # ==================================================
 
 prompt = st.chat_input("Ask me anything...")
 
 if prompt:
 
-    # 1. Save user message
     st.session_state.messages.append({
         "role": "user",
         "content": prompt
     })
 
-    # 2. SHOW USER MESSAGE INSTANTLY (FIX FOR YOUR ISSUE)
+    # show instantly
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 3. Build conversation
     conversation = [
         SystemMessage(content="You are KITTU AI, a helpful assistant.")
     ]
@@ -138,7 +155,6 @@ if prompt:
         else:
             conversation.append(AIMessage(content=m["content"]))
 
-    # 4. AI RESPONSE
     with st.chat_message("assistant"):
         placeholder = st.empty()
         placeholder.markdown("⏳ Thinking...")
@@ -147,23 +163,22 @@ if prompt:
             response = model.invoke(conversation)
             answer = response.content
 
-            typed = ""
+            text = ""
             for c in answer:
-                typed += c
-                placeholder.markdown(typed)
+                text += c
+                placeholder.markdown(text)
                 time.sleep(0.002)
 
         except Exception as e:
             answer = f"❌ Error: {e}"
             placeholder.error(answer)
 
-    # 5. SAVE AI MESSAGE
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer
     })
 
-    # 6. SAVE HISTORY SAFELY
+    # save history
     first_user = "New Chat"
     for m in st.session_state.messages:
         if m["role"] == "user":
