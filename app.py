@@ -3,6 +3,8 @@ import json
 import time
 import streamlit as st
 
+from authlib.integrations.requests_client import OAuth2Session
+
 from langchain_huggingface import (
     HuggingFaceEndpoint,
     ChatHuggingFace
@@ -25,46 +27,70 @@ st.set_page_config(
 )
 
 # ==================================================
-# SIMPLE LOGIN (SAFE VERSION)
+# GOOGLE AUTH CONFIG
 # ==================================================
-# (Replace later with Google OAuth if needed)
 
-def login():
-    st.sidebar.title("🔐 Login")
+CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
+CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
+REDIRECT_URI = st.secrets.get("REDIRECT_URI", "http://localhost:8501")
 
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
+AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/auth"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+USERINFO_URL = "https://www.googleapis.com/oauth2/v1/userinfo"
 
-    if st.sidebar.button("Login"):
-        if username == "admin" and password == "1234":
-            st.session_state["logged_in"] = True
-            st.session_state["user"] = username
-        else:
-            st.sidebar.error("Invalid credentials")
+scope = "openid email profile"
 
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
+oauth = OAuth2Session(
+    CLIENT_ID,
+    CLIENT_SECRET,
+    scope=scope,
+    redirect_uri=REDIRECT_URI
+)
 
-if not st.session_state["logged_in"]:
-    login()
+# ==================================================
+# LOGIN SYSTEM
+# ==================================================
+
+if "token" not in st.session_state:
+
+    st.title("🤖 KITTU AI Login")
+
+    auth_url, state = oauth.create_authorization_url(AUTHORIZE_URL)
+
+    st.markdown(f"### 👉 [Login with Google]({auth_url})")
+
+    code = st.query_params.get("code")
+
+    if code:
+
+        token = oauth.fetch_token(
+            TOKEN_URL,
+            code=code
+        )
+
+        st.session_state["token"] = token
+
+        user = oauth.get(USERINFO_URL).json()
+
+        st.session_state["user"] = user
+
+        st.rerun()
+
     st.stop()
 
 # ==================================================
-# APP TITLE
+# USER INFO
 # ==================================================
 
-st.markdown(
-    """
-    <div style="text-align:center;font-size:42px;
-    font-weight:bold;
-    background: linear-gradient(90deg,#00d4ff,#7d5fff);
-    -webkit-background-clip:text;
-    -webkit-text-fill-color:transparent;">
-    🤖 KITTU AI
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+user = st.session_state["user"]
+
+st.sidebar.image(user["picture"])
+st.sidebar.write(f"👤 {user['name']}")
+st.sidebar.write(f"📧 {user['email']}")
+
+if st.sidebar.button("🚪 Logout"):
+    st.session_state.clear()
+    st.rerun()
 
 # ==================================================
 # HISTORY
@@ -91,7 +117,7 @@ def save_history():
         json.dump(st.session_state.chat_history, f, indent=2)
 
 # ==================================================
-# SIDEBAR
+# SIDEBAR SETTINGS
 # ==================================================
 
 with st.sidebar:
@@ -111,14 +137,6 @@ with st.sidebar:
     temperature = st.slider("Temperature", 0.0, 2.0, 1.0, 0.1)
     max_new_tokens = st.slider("Max Tokens", 128, 4096, 1024)
 
-    st.divider()
-
-    st.success(f"Logged in as {st.session_state.get('user')}")
-
-    if st.button("🚪 Logout"):
-        st.session_state.clear()
-        st.rerun()
-
     if st.button("🗑 Clear Chat"):
         st.session_state.messages = []
         st.rerun()
@@ -131,7 +149,7 @@ with st.sidebar:
             st.rerun()
 
 # ==================================================
-# MODEL
+# MODEL LOADING
 # ==================================================
 
 @st.cache_resource(show_spinner=False)
@@ -152,12 +170,14 @@ model = load_model(model_name, temperature, max_new_tokens)
 # CHAT DISPLAY
 # ==================================================
 
+st.title("🤖 KITTU AI")
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 # ==================================================
-# INPUT
+# USER INPUT
 # ==================================================
 
 prompt = st.chat_input("Ask me anything...")
