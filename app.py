@@ -55,7 +55,7 @@ st.markdown("""
 # ==================================================
 
 st.markdown(
-    '<div class="title">🤖 Payash AI ChatBox</div>',
+    '<div class="title">🤖 KITTU AI</div>',
     unsafe_allow_html=True
 )
 
