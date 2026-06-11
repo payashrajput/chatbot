@@ -2,3 +2,4 @@ streamlit
 langchain
 langchain-huggingface
 huggingface-hub
+streamlit-authenticator
