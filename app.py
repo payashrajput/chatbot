@@ -55,7 +55,7 @@ st.markdown("""
 # ==================================================
 
 st.markdown(
-    '<div class="title">🤖 KITTU AI</div>',
+    '<div class="title">🤖 ANSH AI</div>',
     unsafe_allow_html=True
 )
 
