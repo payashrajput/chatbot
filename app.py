@@ -17,6 +17,113 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 st.set_page_config(page_title="KITTU AI", page_icon="🤖", layout="wide")
 
 # ==================================================
+# AUTH SYSTEM (ONLY ONE - STABLE)
+# ==================================================
+
+with open("config.yaml") as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+authenticator = stauth.Authenticate(
+    config["credentials"],
+    config["cookie"]["name"],
+    config["cookie"]["key"],
+    config["cookie"]["expiry_days"]
+)
+
+authenticator.login()
+
+if st.session_state.get("authentication_status") is False:
+    st.error("❌ Wrong username/password")
+    st.stop()
+
+if st.session_state.get("authentication_status") is None:
+    st.warning("🔐 Please login")
+    st.stop()
+
+authenticator.logout("Logout", "sidebar")
+
+st.sidebar.success(f"Welcome {st.session_state['name']}")
+
+# ==================================================
+# CHAT APP
+# ==================================================
+
+st.title("🤖 KITTU AI")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+@st.cache_resource
+def load_model():
+    return ChatHuggingFace(
+        llm=HuggingFaceEndpoint(
+            repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+            task="text-generation",
+            temperature=0.7,
+            max_new_tokens=1024
+        )
+    )
+
+model = load_model()
+
+prompt = st.chat_input("Ask me anything...")
+
+if prompt:
+
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    conversation = [
+        SystemMessage(content="You are KITTU AI assistant.")
+    ]
+
+    for m in st.session_state.messages:
+        if m["role"] == "user":
+            conversation.append(HumanMessage(content=m["content"]))
+        else:
+            conversation.append(AIMessage(content=m["content"]))
+
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+
+        try:
+            response = model.invoke(conversation)
+            answer = response.content
+
+            text = ""
+            for c in answer:
+                text += c
+                placeholder.markdown(text)
+                time.sleep(0.002)
+
+        except Exception as e:
+            placeholder.error(str(e))
+
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer
+    })import streamlit as st
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
+
+import os
+import json
+import time
+
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
+# ==================================================
+# PAGE CONFIG
+# ==================================================
+
+st.set_page_config(page_title="KITTU AI", page_icon="🤖", layout="wide")
+
+# ==================================================
 # LOAD CONFIG
 # ==================================================
 
