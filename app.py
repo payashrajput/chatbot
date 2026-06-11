@@ -1,4 +1,102 @@
 import streamlit as st
+import time
+
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
+# ==================================================
+# PAGE CONFIG
+# ==================================================
+
+st.set_page_config(
+    page_title="KITTU AI",
+    page_icon="🤖",
+    layout="wide"
+)
+
+st.title("🤖 KITTU AI")
+
+# ==================================================
+# SESSION STATE
+# ==================================================
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# ==================================================
+# MODEL (STABLE)
+# ==================================================
+
+@st.cache_resource
+def load_model():
+    return ChatHuggingFace(
+        llm=HuggingFaceEndpoint(
+            repo_id="microsoft/Phi-3-mini-4k-instruct",
+            task="text-generation",
+            temperature=0.7,
+            max_new_tokens=1024
+        )
+    )
+
+model = load_model()
+
+# ==================================================
+# SHOW CHAT HISTORY
+# ==================================================
+
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# ==================================================
+# USER INPUT
+# ==================================================
+
+prompt = st.chat_input("Ask me anything...")
+
+if prompt:
+
+    # save user message
+    st.session_state.messages.append({
+        "role": "user",
+        "content": prompt
+    })
+
+    # build conversation
+    conversation = [
+        SystemMessage(content="You are KITTU AI, a helpful assistant.")
+    ]
+
+    for m in st.session_state.messages:
+        if m["role"] == "user":
+            conversation.append(HumanMessage(content=m["content"]))
+        else:
+            conversation.append(AIMessage(content=m["content"]))
+
+    # assistant response
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        placeholder.markdown("⏳ Thinking...")
+
+        try:
+            response = model.invoke(conversation)
+            answer = response.content
+
+            typed = ""
+            for c in answer:
+                typed += c
+                placeholder.markdown(typed)
+                time.sleep(0.002)
+
+        except Exception as e:
+            answer = f"Error: {e}"
+            placeholder.error(answer)
+
+    # save assistant message
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer
+    })import streamlit as st
 import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
