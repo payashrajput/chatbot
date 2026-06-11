@@ -2,24 +2,24 @@ import streamlit as st
 import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
-import os
 import json
+import os
 import time
 
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # ==================================================
-# PAGE CONFIG
+# CONFIG
 # ==================================================
 
-st.set_page_config(page_title="KITTU AI", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="KITTU AI PRO", page_icon="🤖", layout="wide")
 
 # ==================================================
-# LOAD AUTH CONFIG
+# AUTH
 # ==================================================
 
-with open("config.yaml", "r") as file:
+with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
 
 authenticator = stauth.Authenticate(
@@ -31,53 +31,27 @@ authenticator = stauth.Authenticate(
 
 authenticator.login()
 
-# ==================================================
-# LOGIN CHECK
-# ==================================================
-
 if st.session_state.get("authentication_status") is False:
-    st.error("❌ Wrong username or password")
+    st.error("❌ Wrong login")
     st.stop()
 
 if st.session_state.get("authentication_status") is None:
-    st.warning("🔐 Please login to continue")
+    st.warning("🔐 Login required")
     st.stop()
 
-# Logged in
 authenticator.logout("Logout", "sidebar")
+
 st.sidebar.success(f"Welcome {st.session_state['name']}")
 
 # ==================================================
-# CHAT HISTORY
-# ==================================================
-
-HISTORY_FILE = "chat_history.json"
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if os.path.exists(HISTORY_FILE):
-    try:
-        with open(HISTORY_FILE, "r") as f:
-            st.session_state.chat_history = json.load(f)
-    except:
-        st.session_state.chat_history = []
-else:
-    st.session_state.chat_history = []
-
-def save_history():
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(st.session_state.chat_history, f, indent=2)
-
-# ==================================================
-# MODEL
+# MODEL (FIXED + STABLE CHAT MODEL)
 # ==================================================
 
 @st.cache_resource
 def load_model():
     return ChatHuggingFace(
         llm=HuggingFaceEndpoint(
-            repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+            repo_id="HuggingFaceH4/zephyr-7b-beta",
             task="text-generation",
             temperature=0.7,
             max_new_tokens=1024
@@ -87,10 +61,38 @@ def load_model():
 model = load_model()
 
 # ==================================================
-# UI
+# MEMORY
 # ==================================================
 
-st.title("🤖 KITTU AI")
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+HISTORY_FILE = "chat_history.json"
+
+def save_history():
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(st.session_state.messages, f, indent=2)
+
+# ==================================================
+# SIDEBAR CONTROLS
+# ==================================================
+
+with st.sidebar:
+    st.title("⚙ Controls")
+
+    if st.button("🗑 Clear Chat"):
+        st.session_state.messages = []
+        st.rerun()
+
+# ==================================================
+# UI HEADER
+# ==================================================
+
+st.title("🤖 KITTU AI PRO")
+
+# ==================================================
+# DISPLAY CHAT
+# ==================================================
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -100,21 +102,21 @@ for msg in st.session_state.messages:
 # INPUT
 # ==================================================
 
-prompt = st.chat_input("Ask me anything...")
+prompt = st.chat_input("Ask anything...")
 
 if prompt:
 
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     conversation = [
-        SystemMessage(content="You are KITTU AI, a helpful assistant.")
+        SystemMessage(content="You are KITTU AI. Be helpful, smart, and concise.")
     ]
 
-    for msg in st.session_state.messages:
-        if msg["role"] == "user":
-            conversation.append(HumanMessage(content=msg["content"]))
+    for m in st.session_state.messages:
+        if m["role"] == "user":
+            conversation.append(HumanMessage(content=m["content"]))
         else:
-            conversation.append(AIMessage(content=msg["content"]))
+            conversation.append(AIMessage(content=m["content"]))
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
@@ -124,14 +126,20 @@ if prompt:
             response = model.invoke(conversation)
             answer = response.content
 
-            typed = ""
+            # STREAMING EFFECT (FAST UX)
+            text = ""
             for c in answer:
-                typed += c
-                placeholder.markdown(typed)
+                text += c
+                placeholder.markdown(text)
                 time.sleep(0.002)
 
         except Exception as e:
             answer = f"Error: {e}"
             placeholder.error(answer)
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer
+    })
+
+    save_history()
