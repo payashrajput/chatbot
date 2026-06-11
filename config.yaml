@@ -3,7 +3,7 @@ credentials:
     admin:
       email: admin@gmail.com
       name: Admin
-      password: "$2b$12$examplehashedpassword"
+      password: "$2b$12$u0PQ2LpQTPNn6I4xLSC20.jGzjYL/Ne.tqwddvOV5jAW4oYZl/y5y"
 
 cookie:
   name: kittu_cookie
