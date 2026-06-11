@@ -5,16 +5,8 @@ import streamlit as st
 
 from authlib.integrations.requests_client import OAuth2Session
 
-from langchain_huggingface import (
-    HuggingFaceEndpoint,
-    ChatHuggingFace
-)
-
-from langchain_core.messages import (
-    SystemMessage,
-    HumanMessage,
-    AIMessage
-)
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # ==================================================
 # CONFIG
@@ -27,12 +19,12 @@ st.set_page_config(
 )
 
 # ==================================================
-# GOOGLE AUTH CONFIG
+# GOOGLE OAUTH CONFIG
 # ==================================================
 
 CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
 CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
-REDIRECT_URI = st.secrets.get("REDIRECT_URI", "https://chatbot-mrdkszkw3cnp8ymk7fzdhs.streamlit.app/")
+REDIRECT_URI = st.secrets["REDIRECT_URI"]
 
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -51,7 +43,7 @@ oauth = OAuth2Session(
 # LOGIN SYSTEM
 # ==================================================
 
-if "token" not in st.session_state:
+if "user" not in st.session_state:
 
     st.title("🤖 KITTU AI Login")
 
@@ -63,18 +55,22 @@ if "token" not in st.session_state:
 
     if code:
 
-        token = oauth.fetch_token(
-            TOKEN_URL,
-            code=code
-        )
+        try:
+            token = oauth.fetch_token(
+                TOKEN_URL,
+                code=code
+            )
 
-        st.session_state["token"] = token
+            st.session_state["token"] = token
 
-        user = oauth.get(USERINFO_URL).json()
+            user_info = oauth.get(USERINFO_URL).json()
 
-        st.session_state["user"] = user
+            st.session_state["user"] = user_info
 
-        st.rerun()
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Login failed: {e}")
 
     st.stop()
 
@@ -117,7 +113,7 @@ def save_history():
         json.dump(st.session_state.chat_history, f, indent=2)
 
 # ==================================================
-# SIDEBAR SETTINGS
+# SIDEBAR
 # ==================================================
 
 with st.sidebar:
@@ -149,7 +145,7 @@ with st.sidebar:
             st.rerun()
 
 # ==================================================
-# MODEL LOADING
+# MODEL
 # ==================================================
 
 @st.cache_resource(show_spinner=False)
@@ -167,17 +163,17 @@ def load_model(repo_id, temperature, max_new_tokens):
 model = load_model(model_name, temperature, max_new_tokens)
 
 # ==================================================
-# CHAT DISPLAY
+# CHAT UI
 # ==================================================
 
 st.title("🤖 KITTU AI")
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
 # ==================================================
-# USER INPUT
+# INPUT
 # ==================================================
 
 prompt = st.chat_input("Ask me anything...")
