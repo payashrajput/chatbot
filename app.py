@@ -19,6 +19,13 @@ st.set_page_config(
 st.title("🤖 KITTU AI")
 
 # ==================================================
+# HUGGINGFACE TOKEN (REQUIRED FOR 401 FIX)
+# ==================================================
+
+if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
+    os.environ["HUGGINGFACEHUB_API_TOKEN"] = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
+
+# ==================================================
 # SESSION STATE
 # ==================================================
 
@@ -29,12 +36,11 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # ==================================================
-# SAFE HISTORY FILE
+# HISTORY FILE
 # ==================================================
 
 HISTORY_FILE = "chat_history.json"
 
-# Load history safely
 if os.path.exists(HISTORY_FILE):
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -49,23 +55,25 @@ def save_history():
         json.dump(st.session_state.chat_history, f, indent=2)
 
 # ==================================================
-# SIDEBAR SETTINGS
+# SIDEBAR (YOUR MODELS UNCHANGED)
 # ==================================================
 
 with st.sidebar:
 
-    st.header("⚙ Settings")
+    st.title("⚙ Settings")
 
     model_name = st.selectbox(
         "Choose Model",
         [
-            "microsoft/Phi-3-mini-4k-instruct",
-            "HuggingFaceH4/zephyr-7b-beta"
+            "deepseek-ai/DeepSeek-V4-Pro",
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "Qwen/Qwen2.5-72B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.3"
         ]
     )
 
-    temperature = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
-    max_tokens = st.slider("Max Tokens", 128, 2048, 1024)
+    temperature = st.slider("Temperature", 0.0, 2.0, 1.0, 0.1)
+    max_new_tokens = st.slider("Max Tokens", 128, 4096, 1024)
 
     if st.button("🗑 Clear Chat"):
         st.session_state.messages = []
@@ -75,32 +83,32 @@ with st.sidebar:
 
     st.subheader("📜 Chat History")
 
-    # SAFE HISTORY DISPLAY (NO KEYERROR)
     for i, chat in enumerate(reversed(st.session_state.chat_history)):
 
+        # FIXED: no KeyError anymore
         title = chat.get("title", "New Chat")
 
-        if st.button(f"💬 {title}", key=str(i)):
+        if st.button(f"💬 {title}", key=f"history_{i}"):
             st.session_state.messages = chat.get("messages", [])
             st.rerun()
 
 # ==================================================
-# MODEL LOADER
+# MODEL (UNCHANGED LOGIC)
 # ==================================================
 
 @st.cache_resource(show_spinner=False)
-def load_model(repo_id, temperature, max_tokens):
+def load_model(repo_id, temperature, max_new_tokens):
 
     llm = HuggingFaceEndpoint(
         repo_id=repo_id,
         task="text-generation",
         temperature=temperature,
-        max_new_tokens=max_tokens
+        max_new_tokens=max_new_tokens
     )
 
     return ChatHuggingFace(llm=llm)
 
-model = load_model(model_name, temperature, max_tokens)
+model = load_model(model_name, temperature, max_new_tokens)
 
 # ==================================================
 # DISPLAY CHAT
@@ -141,10 +149,10 @@ if prompt:
             response = model.invoke(conversation)
             answer = response.content
 
-            text = ""
+            typed = ""
             for c in answer:
-                text += c
-                placeholder.markdown(text)
+                typed += c
+                placeholder.markdown(typed)
                 time.sleep(0.002)
 
         except Exception as e:
@@ -156,7 +164,7 @@ if prompt:
         "content": answer
     })
 
-    # SAVE CHAT WITH SAFE TITLE
+    # SAVE HISTORY SAFE
     first_user = "New Chat"
     for m in st.session_state.messages:
         if m["role"] == "user":
