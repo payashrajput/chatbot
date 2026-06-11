@@ -1,6 +1,6 @@
 streamlit
-streamlit-oauth
+authlib
+requests
 langchain
 langchain-huggingface
 huggingface_hub
-pyyaml
