@@ -1,0 +1,15 @@
+credentials:
+  usernames:
+    admin:
+      email: admin@gmail.com
+      name: Admin User
+      password: "$2b$12$KIX/examplehashedpassword"
+
+cookie:
+  name: kittu_cookie
+  key: random_signature_key
+  expiry_days: 30
+
+preauthorized:
+  emails:
+    - admin@gmail.com
