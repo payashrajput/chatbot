@@ -2,7 +2,7 @@ import os
 import json
 import time
 import streamlit as st
-
+from streamlit_oauth import OAuth2Component
 from langchain_huggingface import (
     HuggingFaceEndpoint,
     ChatHuggingFace
@@ -23,6 +23,33 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide"
 )
+# ==========================================
+# GOOGLE LOGIN
+# ==========================================
+
+CLIENT_ID = st.secrets["691305688044-u6hdlc485tegoop9tjol0s3i7aohp4lr.apps.googleusercontent.com "]
+CLIENT_SECRET = st.secrets["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"]
+
+oauth2 = OAuth2Component(
+    CLIENT_ID,
+    CLIENT_SECRET,
+    "https://accounts.google.com/o/oauth2/auth",
+    "https://oauth2.googleapis.com/token"
+)
+
+result = oauth2.authorize_button(
+    "🔐 Login with Google",
+    redirect_uri="http://localhost:8501",
+    scope="openid email profile"
+)
+if result:
+    st.session_state["logged_in"] = True
+    user_info = result.get("token", {})
+
+    st.sidebar.success("Logged In")
+if not st.session_state.get("logged_in"):
+    st.warning("Please login with Google first.")
+    st.stop()
 
 HISTORY_FILE = "chat_history.json"
 
@@ -140,7 +167,11 @@ with st.sidebar:
     # --------------------------------------------
     # Clear Chat
     # --------------------------------------------
+    if st.button("🚪 Logout"):
 
+        st.session_state.clear()
+
+        st.rerun()
     if st.button("🗑 Clear Chat"):
 
         if st.session_state.messages:
