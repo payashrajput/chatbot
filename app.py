@@ -39,7 +39,7 @@ oauth2 = OAuth2Component(
 
 result = oauth2.authorize_button(
     "🔐 Login with Google",
-    redirect_uri="http://localhost:8501",
+    redirect_uri="https://chatbot-mrdkszkw3cnp8ymk7fzdhs.streamlit.app/",
     scope="openid email profile"
 )
 if result:
