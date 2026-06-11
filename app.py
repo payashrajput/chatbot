@@ -19,7 +19,7 @@ from langchain_core.messages import (
 # ==================================================
 
 st.set_page_config(
-    page_title="Payash AI",
+    page_title="KITTU AI",
     page_icon="🤖",
     layout="wide"
 )
@@ -55,7 +55,7 @@ st.markdown("""
 # ==================================================
 
 st.markdown(
-    '<div class="title">🤖 ANSH AI</div>',
+    '<div class="title">🤖 KITTU AI</div>',
     unsafe_allow_html=True
 )
 
