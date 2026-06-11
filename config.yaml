@@ -7,9 +7,5 @@ credentials:
 
 cookie:
   name: kittu_cookie
-  key: random_key_123
+  key: random_secret_123
   expiry_days: 30
-
-preauthorized:
-  emails:
-    - admin@gmail.com
