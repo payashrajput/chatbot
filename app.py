@@ -3,16 +3,8 @@ import json
 import time
 import streamlit as st
 
-from langchain_huggingface import (
-    HuggingFaceEndpoint,
-    ChatHuggingFace
-)
-
-from langchain_core.messages import (
-    SystemMessage,
-    HumanMessage,
-    AIMessage
-)
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # ==================================================
 # CONFIG
@@ -24,40 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-HISTORY_FILE = "chat_history.json"
-
-# ==================================================
-# CSS
-# ==================================================
-
-st.markdown("""
-<style>
-
-.main {
-    background-color: #0e1117;
-}
-
-.title {
-    text-align:center;
-    font-size:42px;
-    font-weight:bold;
-    background: linear-gradient(90deg,#00d4ff,#7d5fff);
-    -webkit-background-clip:text;
-    -webkit-text-fill-color:transparent;
-    margin-bottom:20px;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ==================================================
-# TITLE
-# ==================================================
-
-st.markdown(
-    '<div class="title">🤖 KITTU AI</div>',
-    unsafe_allow_html=True
-)
+st.title("🤖 KITTU AI")
 
 # ==================================================
 # SESSION STATE
@@ -67,297 +26,146 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-    if os.path.exists(HISTORY_FILE):
+# ==================================================
+# SAFE HISTORY FILE
+# ==================================================
 
-        try:
-            with open(
-                HISTORY_FILE,
-                "r",
-                encoding="utf-8"
-            ) as f:
+HISTORY_FILE = "chat_history.json"
 
-                st.session_state.chat_history = json.load(f)
-
-        except Exception:
-            st.session_state.chat_history = []
-
-    else:
+# Load history safely
+if os.path.exists(HISTORY_FILE):
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                st.session_state.chat_history = data
+    except:
         st.session_state.chat_history = []
 
-# ==================================================
-# SAVE HISTORY
-# ==================================================
-
 def save_history():
-
-    with open(
-        HISTORY_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        json.dump(
-            st.session_state.chat_history,
-            f,
-            indent=2,
-            ensure_ascii=False
-        )
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(st.session_state.chat_history, f, indent=2)
 
 # ==================================================
-# SIDEBAR
+# SIDEBAR SETTINGS
 # ==================================================
 
 with st.sidebar:
 
-    st.title("⚙ Settings")
+    st.header("⚙ Settings")
 
     model_name = st.selectbox(
         "Choose Model",
         [
-            "deepseek-ai/DeepSeek-V4-Pro",
-            "meta-llama/Llama-3.1-8B-Instruct",
-            "Qwen/Qwen2.5-72B-Instruct",
-            "mistralai/Mistral-7B-Instruct-v0.3"
+            "microsoft/Phi-3-mini-4k-instruct",
+            "HuggingFaceH4/zephyr-7b-beta"
         ]
     )
 
-    temperature = st.slider(
-        "Temperature",
-        0.0,
-        2.0,
-        1.0,
-        0.1
-    )
-
-    max_new_tokens = st.slider(
-        "Max Tokens",
-        128,
-        4096,
-        1024
-    )
-
-    # --------------------------------------------
-    # Clear Chat
-    # --------------------------------------------
+    temperature = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
+    max_tokens = st.slider("Max Tokens", 128, 2048, 1024)
 
     if st.button("🗑 Clear Chat"):
-
-        if st.session_state.messages:
-
-            first_user_msg = "New Chat"
-
-            for msg in st.session_state.messages:
-
-                if msg["role"] == "user":
-
-                    first_user_msg = (
-                        msg["content"]
-                        .replace("\n", " ")
-                        [:50]
-                    )
-
-                    break
-
-            st.session_state.chat_history.append(
-                {
-                    "title": first_user_msg,
-                    "messages":
-                        st.session_state.messages.copy()
-                }
-            )
-
-            save_history()
-
         st.session_state.messages = []
-
         st.rerun()
 
     st.divider()
 
     st.subheader("📜 Chat History")
 
-    if not st.session_state.chat_history:
+    # SAFE HISTORY DISPLAY (NO KEYERROR)
+    for i, chat in enumerate(reversed(st.session_state.chat_history)):
 
-        st.caption("No saved chats yet.")
+        title = chat.get("title", "New Chat")
 
-    else:
-
-        for idx, chat in enumerate(
-            reversed(
-                st.session_state.chat_history
-            )
-        ):
-
-            if st.button(
-                f"💬 {chat['title']}",
-                key=f"history_{idx}"
-            ):
-
-                st.session_state.messages = (
-                    chat["messages"].copy()
-                )
-
-                st.rerun()
+        if st.button(f"💬 {title}", key=str(i)):
+            st.session_state.messages = chat.get("messages", [])
+            st.rerun()
 
 # ==================================================
-# MODEL
+# MODEL LOADER
 # ==================================================
 
 @st.cache_resource(show_spinner=False)
-def load_model(
-    repo_id,
-    temperature,
-    max_new_tokens
-):
+def load_model(repo_id, temperature, max_tokens):
 
     llm = HuggingFaceEndpoint(
         repo_id=repo_id,
         task="text-generation",
         temperature=temperature,
-        max_new_tokens=max_new_tokens
+        max_new_tokens=max_tokens
     )
 
     return ChatHuggingFace(llm=llm)
 
-model = load_model(
-    model_name,
-    temperature,
-    max_new_tokens
-)
+model = load_model(model_name, temperature, max_tokens)
 
 # ==================================================
 # DISPLAY CHAT
 # ==================================================
 
-for message in st.session_state.messages:
-
-    with st.chat_message(
-        message["role"]
-    ):
-        st.markdown(
-            message["content"]
-        )
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
 # ==================================================
-# USER INPUT
+# INPUT
 # ==================================================
 
-prompt = st.chat_input(
-    "Ask me anything..."
-)
+prompt = st.chat_input("Ask me anything...")
 
 if prompt:
 
-    # ------------------------------------------
-    # Save User Message
-    # ------------------------------------------
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": prompt
-        }
-    )
-
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # ------------------------------------------
-    # Build Conversation
-    # ------------------------------------------
+    st.session_state.messages.append({
+        "role": "user",
+        "content": prompt
+    })
 
     conversation = [
-
-        SystemMessage(
-            content="""
-You are Payash AI.
-
-You are a helpful AI assistant.
-
-Remember previous messages and
-answer follow-up questions using
-conversation history.
-"""
-        )
+        SystemMessage(content="You are KITTU AI, a helpful assistant.")
     ]
 
-    for msg in st.session_state.messages:
-
-        if msg["role"] == "user":
-
-            conversation.append(
-                HumanMessage(
-                    content=msg["content"]
-                )
-            )
-
+    for m in st.session_state.messages:
+        if m["role"] == "user":
+            conversation.append(HumanMessage(content=m["content"]))
         else:
+            conversation.append(AIMessage(content=m["content"]))
 
-            conversation.append(
-                AIMessage(
-                    content=msg["content"]
-                )
-            )
-
-    # ------------------------------------------
-    # Generate Response
-    # ------------------------------------------
-
-    with st.chat_message(
-        "assistant"
-    ):
-
+    with st.chat_message("assistant"):
         placeholder = st.empty()
-
-        placeholder.markdown(
-            "⏳ Thinking..."
-        )
+        placeholder.markdown("⏳ Thinking...")
 
         try:
+            response = model.invoke(conversation)
+            answer = response.content
 
-            response = model.invoke(
-                conversation
-            )
-
-            answer = (
-                response.content
-                if hasattr(
-                    response,
-                    "content"
-                )
-                else str(response)
-            )
-
-            typed_text = ""
-
-            for char in answer:
-
-                typed_text += char
-
-                placeholder.markdown(
-                    typed_text
-                )
-
+            text = ""
+            for c in answer:
+                text += c
+                placeholder.markdown(text)
                 time.sleep(0.002)
 
         except Exception as e:
+            answer = f"❌ Error: {e}"
+            placeholder.error(answer)
 
-            answer = (
-                f"❌ Error: {str(e)}"
-            )
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer
+    })
 
-            placeholder.error(
-                answer
-            )
+    # SAVE CHAT WITH SAFE TITLE
+    first_user = "New Chat"
+    for m in st.session_state.messages:
+        if m["role"] == "user":
+            first_user = m["content"][:50]
+            break
 
-    # ------------------------------------------
-    # Save Assistant Response
-    # ------------------------------------------
+    st.session_state.chat_history.append({
+        "title": first_user,
+        "messages": st.session_state.messages.copy()
+    })
 
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": answer
-        }
-    )
+    save_history()
