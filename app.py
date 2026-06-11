@@ -32,7 +32,7 @@ st.set_page_config(
 
 CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
 CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
-REDIRECT_URI = st.secrets.get("REDIRECT_URI", "http://localhost:8501")
+REDIRECT_URI = st.secrets.get("REDIRECT_URI", "https://chatbot-mrdkszkw3cnp8ymk7fzdhs.streamlit.app/")
 
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
