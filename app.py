@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🤖 KITTU AI PLUS")
+st.title("🤖 KITTU AI")
 
 # ==================================================
 # SESSION STATE
