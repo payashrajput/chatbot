@@ -39,8 +39,8 @@ def load_admin_creds() -> dict:
     if not res.data:
         # First time: insert default admin
         sb.table("admin_credentials").insert({
-            "username": "admin",
-            "password_hash": hash_pw("admin123")
+            "username": "kittuai",
+            "password_hash": hash_pw("Payash@ADMIN26")
         }).execute()
         return {"admin": hash_pw("admin123")}
     return {row["username"]: row["password_hash"] for row in res.data}
