@@ -39,10 +39,10 @@ def load_admin_creds() -> dict:
     if not res.data:
         # First time: insert default admin
         sb.table("admin_credentials").insert({
-            "username": "kittuai",
+            "username": "admin",
             "password_hash": hash_pw("Payash@ADMIN26")
         }).execute()
-        return {"kittuai": hash_pw("Payash@ADMIN26")}
+        return {"admin": hash_pw("Payash@ADMIN26")}
     return {row["username"]: row["password_hash"] for row in res.data}
 
 def update_admin_password(username: str, new_pw: str):
@@ -116,7 +116,7 @@ def show_login():
                 st.error("❌ Wrong username or password.")
 
         st.markdown("---")
-        st.caption("Default: **kittuai** / **Payash@ADMIN26**")
+        st.caption("Default: **admin** / **Payash@ADMIN26**")
 
 # ==================================================
 # DASHBOARD
