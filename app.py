@@ -8,7 +8,7 @@ from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # ==================================================
-# CONFIG
+# PAGE CONFIG
 # ==================================================
 
 st.set_page_config(
@@ -17,16 +17,21 @@ st.set_page_config(
     layout="wide"
 )
 
-USERS_FILE  = "users.json"       # { username: hashed_password }
-DATA_DIR    = "user_data"        # user_data/<username>/chat_history.json
+# ==================================================
+# PATHS
+# ==================================================
+
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+USERS_FILE = os.path.join(BASE_DIR, "users.json")
+DATA_DIR   = os.path.join(BASE_DIR, "user_data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ==================================================
 # AUTH HELPERS
 # ==================================================
 
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+def hash_pw(pw: str) -> str:
+    return hashlib.sha256(pw.strip().encode()).hexdigest()
 
 def load_users() -> dict:
     if os.path.exists(USERS_FILE):
@@ -50,14 +55,13 @@ def register_user(username: str, password: str) -> tuple[bool, str]:
         return False, "Password must be at least 4 characters."
     if username in users:
         return False, "Username already exists. Please choose another."
-    users[username] = hash_password(password)
+    users[username] = hash_pw(password)
     save_users(users)
     return True, "Account created! You can now log in."
 
 def verify_user(username: str, password: str) -> bool:
     users = load_users()
-    username = username.strip().lower()
-    return users.get(username) == hash_password(password)
+    return users.get(username.strip().lower()) == hash_pw(password)
 
 # ==================================================
 # PER-USER HISTORY HELPERS
@@ -90,7 +94,7 @@ def save_user_history(username: str, history: list):
 for key, default in [
     ("logged_in", False),
     ("username", ""),
-    ("auth_mode", "login"),        # "login" | "register"
+    ("auth_mode", "login"),
     ("messages", []),
     ("chat_history", []),
     ("current_chat_index", None),
@@ -104,14 +108,10 @@ for key, default in [
 
 def show_auth_screen():
     st.title("🤖 KITTU AI")
-
-    col_l, col_c, col_r = st.columns([1, 1.2, 1])
-    with col_c:
+    _, col, _ = st.columns([1, 1.2, 1])
+    with col:
         mode = st.session_state.auth_mode
-
-        st.markdown(
-            f"### {'🔐 Login' if mode == 'login' else '📝 Create Account'}"
-        )
+        st.markdown(f"### {'🔐 Login' if mode == 'login' else '📝 Create Account'}")
 
         username = st.text_input("Username", key="auth_username")
         password = st.text_input("Password", type="password", key="auth_password")
@@ -119,24 +119,21 @@ def show_auth_screen():
         if mode == "login":
             if st.button("Login", use_container_width=True, type="primary"):
                 if verify_user(username, password):
-                    st.session_state.logged_in  = True
-                    st.session_state.username   = username.strip().lower()
-                    st.session_state.chat_history = load_user_history(
-                        st.session_state.username
-                    )
-                    st.session_state.messages   = []
+                    st.session_state.logged_in    = True
+                    st.session_state.username     = username.strip().lower()
+                    st.session_state.chat_history = load_user_history(st.session_state.username)
+                    st.session_state.messages     = []
                     st.session_state.current_chat_index = None
                     st.rerun()
                 else:
                     st.error("❌ Wrong username or password.")
-
             st.markdown("---")
             st.caption("Don't have an account?")
             if st.button("Create Account", use_container_width=True):
                 st.session_state.auth_mode = "register"
                 st.rerun()
 
-        else:  # register
+        else:
             if st.button("Register", use_container_width=True, type="primary"):
                 ok, msg = register_user(username, password)
                 if ok:
@@ -145,45 +142,37 @@ def show_auth_screen():
                     st.rerun()
                 else:
                     st.error(f"❌ {msg}")
-
             st.markdown("---")
             st.caption("Already have an account?")
             if st.button("Back to Login", use_container_width=True):
                 st.session_state.auth_mode = "login"
                 st.rerun()
 
-
 # ==================================================
-# CHAT HELPERS  (only used when logged in)
+# CHAT HELPERS
 # ==================================================
 
 def _flush_current_chat():
-    """Update or insert the current session into chat_history."""
     if not st.session_state.messages:
         return
-
     title = next(
         (m["content"][:50] for m in st.session_state.messages if m["role"] == "user"),
         "New Chat"
     )
     entry = {"title": title, "messages": st.session_state.messages.copy()}
-
     idx = st.session_state.current_chat_index
     if idx is not None and 0 <= idx < len(st.session_state.chat_history):
         st.session_state.chat_history[idx] = entry
     else:
         st.session_state.chat_history.append(entry)
         st.session_state.current_chat_index = len(st.session_state.chat_history) - 1
-
     save_user_history(st.session_state.username, st.session_state.chat_history)
-
 
 def start_new_chat():
     if st.session_state.messages:
         _flush_current_chat()
     st.session_state.messages = []
     st.session_state.current_chat_index = None
-
 
 # ==================================================
 # MODEL
@@ -198,22 +187,19 @@ def load_llm(repo_id: str):
         max_new_tokens=1024,
     )
 
-
 def get_chat_model(repo_id: str, temp: float, tokens: int):
     llm = load_llm(repo_id)
-    llm.temperature   = temp
+    llm.temperature    = temp
     llm.max_new_tokens = tokens
     return ChatHuggingFace(llm=llm)
 
-
 # ==================================================
-# MAIN APP  (only rendered when logged in)
+# MAIN APP
 # ==================================================
 
 def show_main_app():
     st.title(f"🤖 KITTU AI  —  👤 {st.session_state.username}")
 
-    # ---------- SIDEBAR ----------
     with st.sidebar:
         st.title("⚙️ Settings")
 
@@ -226,19 +212,18 @@ def show_main_app():
                 "deepseek-ai/DeepSeek-V3-0324",
             ]
         )
-
         temperature    = st.slider("Temperature",  0.0, 2.0, 0.7, 0.1)
         max_new_tokens = st.slider("Max Tokens",   128, 4096, 1024)
 
         st.divider()
 
-        col1, col2 = st.columns(2)
-        with col1:
+        c1, c2 = st.columns(2)
+        with c1:
             if st.button("➕ New Chat", use_container_width=True):
                 start_new_chat()
                 st.rerun()
-        with col2:
-            if st.button("🗑️ Clear Chat", use_container_width=True):
+        with c2:
+            if st.button("🗑️ Clear", use_container_width=True):
                 st.session_state.messages = []
                 st.session_state.current_chat_index = None
                 st.rerun()
@@ -248,12 +233,11 @@ def show_main_app():
             st.session_state.messages     = []
             st.session_state.current_chat_index = None
             save_user_history(st.session_state.username, [])
-            st.success("All history cleared!")
+            st.success("History cleared!")
             st.rerun()
 
         st.divider()
 
-        # Logout
         if st.button("🚪 Logout", use_container_width=True):
             _flush_current_chat()
             for key in ["logged_in", "username", "messages",
@@ -269,25 +253,20 @@ def show_main_app():
         else:
             for i, chat in enumerate(reversed(st.session_state.chat_history)):
                 real_index = len(st.session_state.chat_history) - 1 - i
-                title      = chat.get("title", "New Chat")
                 is_active  = (st.session_state.current_chat_index == real_index)
-                label      = f"▶ {title}" if is_active else f"💬 {title}"
-                if st.button(label, key=f"history_{real_index}",
-                             use_container_width=True):
+                label      = f"▶ {chat.get('title','New Chat')}" if is_active else f"💬 {chat.get('title','New Chat')}"
+                if st.button(label, key=f"history_{real_index}", use_container_width=True):
                     _flush_current_chat()
                     st.session_state.messages = chat.get("messages", []).copy()
                     st.session_state.current_chat_index = real_index
                     st.rerun()
 
-    # ---------- MODEL ----------
     model = get_chat_model(model_name, temperature, max_new_tokens)
 
-    # ---------- CHAT DISPLAY ----------
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # ---------- INPUT ----------
     prompt = st.chat_input("Ask me anything...")
 
     if prompt:
@@ -295,9 +274,7 @@ def show_main_app():
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        conversation = [
-            SystemMessage(content="You are KITTU AI, a helpful and friendly assistant.")
-        ]
+        conversation = [SystemMessage(content="You are KITTU AI, a helpful and friendly assistant.")]
         for m in st.session_state.messages:
             if m["role"] == "user":
                 conversation.append(HumanMessage(content=m["content"]))
@@ -310,21 +287,18 @@ def show_main_app():
             try:
                 response = model.invoke(conversation)
                 answer   = response.content.strip()
-
                 streamed = ""
                 for char in answer:
                     streamed += char
                     placeholder.markdown(streamed + "▌")
                     time.sleep(0.008)
                 placeholder.markdown(streamed)
-
             except Exception as e:
                 answer = f"❌ Error: {str(e)}"
                 placeholder.error(answer)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
         _flush_current_chat()
-
 
 # ==================================================
 # ROUTER
