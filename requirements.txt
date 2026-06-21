@@ -3,3 +3,4 @@ langchain
 langchain-huggingface
 huggingface_hub
 langchain-core
+supabase
