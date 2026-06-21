@@ -1,9 +1,8 @@
 import os
-import json
 import time
 import hashlib
 import streamlit as st
-
+from supabase import create_client, Client
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
@@ -18,13 +17,17 @@ st.set_page_config(
 )
 
 # ==================================================
-# PATHS
+# SUPABASE CLIENT
 # ==================================================
 
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-USERS_FILE = os.path.join(BASE_DIR, "users.json")
-DATA_DIR   = os.path.join(BASE_DIR, "user_data")
-os.makedirs(DATA_DIR, exist_ok=True)
+@st.cache_resource
+def get_supabase() -> Client:
+    url = os.environ.get("SUPABASE_URL", "")
+    key = os.environ.get("SUPABASE_KEY", "")
+    if not url or not key:
+        st.error("❌ SUPABASE_URL and SUPABASE_KEY secrets are not set. Please add them in HuggingFace Space settings.")
+        st.stop()
+    return create_client(url, key)
 
 # ==================================================
 # AUTH HELPERS
@@ -33,59 +36,62 @@ os.makedirs(DATA_DIR, exist_ok=True)
 def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.strip().encode()).hexdigest()
 
-def load_users() -> dict:
-    if os.path.exists(USERS_FILE):
-        try:
-            with open(USERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def save_users(users: dict):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2)
-
 def register_user(username: str, password: str) -> tuple[bool, str]:
-    users = load_users()
     username = username.strip().lower()
     if not username or not password:
         return False, "Username and password cannot be empty."
     if len(password) < 4:
         return False, "Password must be at least 4 characters."
-    if username in users:
+    sb = get_supabase()
+    # Check if exists
+    res = sb.table("users").select("username").eq("username", username).execute()
+    if res.data:
         return False, "Username already exists. Please choose another."
-    users[username] = hash_pw(password)
-    save_users(users)
+    sb.table("users").insert({"username": username, "password_hash": hash_pw(password)}).execute()
     return True, "Account created! You can now log in."
 
 def verify_user(username: str, password: str) -> bool:
-    users = load_users()
-    return users.get(username.strip().lower()) == hash_pw(password)
+    username = username.strip().lower()
+    sb = get_supabase()
+    res = sb.table("users").select("password_hash").eq("username", username).execute()
+    if not res.data:
+        return False
+    return res.data[0]["password_hash"] == hash_pw(password)
 
 # ==================================================
-# PER-USER HISTORY HELPERS
+# CHAT HISTORY HELPERS
 # ==================================================
-
-def history_file(username: str) -> str:
-    user_dir = os.path.join(DATA_DIR, username)
-    os.makedirs(user_dir, exist_ok=True)
-    return os.path.join(user_dir, "chat_history.json")
 
 def load_user_history(username: str) -> list:
-    path = history_file(username)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
-        except Exception:
-            return []
-    return []
+    sb = get_supabase()
+    res = sb.table("chat_history") \
+            .select("id, title, messages") \
+            .eq("username", username) \
+            .order("created_at", desc=False) \
+            .execute()
+    return res.data if res.data else []
 
-def save_user_history(username: str, history: list):
-    with open(history_file(username), "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2, ensure_ascii=False)
+def save_chat_entry(username: str, title: str, messages: list, row_id=None):
+    sb = get_supabase()
+    if row_id:
+        sb.table("chat_history") \
+          .update({"title": title, "messages": messages}) \
+          .eq("id", row_id) \
+          .execute()
+        return row_id
+    else:
+        res = sb.table("chat_history") \
+                .insert({"username": username, "title": title, "messages": messages}) \
+                .execute()
+        return res.data[0]["id"] if res.data else None
+
+def delete_all_history(username: str):
+    sb = get_supabase()
+    sb.table("chat_history").delete().eq("username", username).execute()
+
+def delete_chat_entry(row_id):
+    sb = get_supabase()
+    sb.table("chat_history").delete().eq("id", row_id).execute()
 
 # ==================================================
 # SESSION STATE INIT
@@ -96,11 +102,38 @@ for key, default in [
     ("username", ""),
     ("auth_mode", "login"),
     ("messages", []),
-    ("chat_history", []),
-    ("current_chat_index", None),
+    ("chat_history", []),       # list of {id, title, messages}
+    ("current_chat_id", None),  # supabase row id
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+# ==================================================
+# CHAT HELPERS
+# ==================================================
+
+def _flush_current_chat():
+    if not st.session_state.messages:
+        return
+    title = next(
+        (m["content"][:50] for m in st.session_state.messages if m["role"] == "user"),
+        "New Chat"
+    )
+    new_id = save_chat_entry(
+        st.session_state.username,
+        title,
+        st.session_state.messages,
+        row_id=st.session_state.current_chat_id
+    )
+    st.session_state.current_chat_id = new_id
+    # Refresh local cache
+    st.session_state.chat_history = load_user_history(st.session_state.username)
+
+def start_new_chat():
+    if st.session_state.messages:
+        _flush_current_chat()
+    st.session_state.messages        = []
+    st.session_state.current_chat_id = None
 
 # ==================================================
 # LOGIN / REGISTER SCREEN
@@ -119,11 +152,11 @@ def show_auth_screen():
         if mode == "login":
             if st.button("Login", use_container_width=True, type="primary"):
                 if verify_user(username, password):
-                    st.session_state.logged_in    = True
-                    st.session_state.username     = username.strip().lower()
-                    st.session_state.chat_history = load_user_history(st.session_state.username)
-                    st.session_state.messages     = []
-                    st.session_state.current_chat_index = None
+                    st.session_state.logged_in       = True
+                    st.session_state.username        = username.strip().lower()
+                    st.session_state.chat_history    = load_user_history(st.session_state.username)
+                    st.session_state.messages        = []
+                    st.session_state.current_chat_id = None
                     st.rerun()
                 else:
                     st.error("❌ Wrong username or password.")
@@ -132,7 +165,6 @@ def show_auth_screen():
             if st.button("Create Account", use_container_width=True):
                 st.session_state.auth_mode = "register"
                 st.rerun()
-
         else:
             if st.button("Register", use_container_width=True, type="primary"):
                 ok, msg = register_user(username, password)
@@ -149,32 +181,6 @@ def show_auth_screen():
                 st.rerun()
 
 # ==================================================
-# CHAT HELPERS
-# ==================================================
-
-def _flush_current_chat():
-    if not st.session_state.messages:
-        return
-    title = next(
-        (m["content"][:50] for m in st.session_state.messages if m["role"] == "user"),
-        "New Chat"
-    )
-    entry = {"title": title, "messages": st.session_state.messages.copy()}
-    idx = st.session_state.current_chat_index
-    if idx is not None and 0 <= idx < len(st.session_state.chat_history):
-        st.session_state.chat_history[idx] = entry
-    else:
-        st.session_state.chat_history.append(entry)
-        st.session_state.current_chat_index = len(st.session_state.chat_history) - 1
-    save_user_history(st.session_state.username, st.session_state.chat_history)
-
-def start_new_chat():
-    if st.session_state.messages:
-        _flush_current_chat()
-    st.session_state.messages = []
-    st.session_state.current_chat_index = None
-
-# ==================================================
 # MODEL
 # ==================================================
 
@@ -187,7 +193,7 @@ def load_llm(repo_id: str):
         max_new_tokens=1024,
     )
 
-def get_chat_model(repo_id: str, temp: float, tokens: int):
+def get_chat_model(repo_id, temp, tokens):
     llm = load_llm(repo_id)
     llm.temperature    = temp
     llm.max_new_tokens = tokens
@@ -203,17 +209,14 @@ def show_main_app():
     with st.sidebar:
         st.title("⚙️ Settings")
 
-        model_name = st.selectbox(
-            "Choose Model",
-            [
-                "meta-llama/Llama-3.1-8B-Instruct",
-                "Qwen/Qwen2.5-72B-Instruct",
-                "mistralai/Mistral-7B-Instruct-v0.3",
-                "deepseek-ai/DeepSeek-V3-0324",
-            ]
-        )
-        temperature    = st.slider("Temperature",  0.0, 2.0, 0.7, 0.1)
-        max_new_tokens = st.slider("Max Tokens",   128, 4096, 1024)
+        model_name = st.selectbox("Choose Model", [
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "Qwen/Qwen2.5-72B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "deepseek-ai/DeepSeek-V3-0324",
+        ])
+        temperature    = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
+        max_new_tokens = st.slider("Max Tokens",  128, 4096, 1024)
 
         st.divider()
 
@@ -224,15 +227,18 @@ def show_main_app():
                 st.rerun()
         with c2:
             if st.button("🗑️ Clear", use_container_width=True):
-                st.session_state.messages = []
-                st.session_state.current_chat_index = None
+                if st.session_state.current_chat_id:
+                    delete_chat_entry(st.session_state.current_chat_id)
+                st.session_state.messages        = []
+                st.session_state.current_chat_id = None
+                st.session_state.chat_history    = load_user_history(st.session_state.username)
                 st.rerun()
 
         if st.button("🧹 Clear All History", use_container_width=True):
-            st.session_state.chat_history = []
-            st.session_state.messages     = []
-            st.session_state.current_chat_index = None
-            save_user_history(st.session_state.username, [])
+            delete_all_history(st.session_state.username)
+            st.session_state.chat_history    = []
+            st.session_state.messages        = []
+            st.session_state.current_chat_id = None
             st.success("History cleared!")
             st.rerun()
 
@@ -240,25 +246,24 @@ def show_main_app():
 
         if st.button("🚪 Logout", use_container_width=True):
             _flush_current_chat()
-            for key in ["logged_in", "username", "messages",
-                        "chat_history", "current_chat_index"]:
-                del st.session_state[key]
+            for k in ["logged_in", "username", "messages", "chat_history", "current_chat_id"]:
+                del st.session_state[k]
             st.rerun()
 
         st.divider()
         st.subheader("📜 Chat History")
 
-        if not st.session_state.chat_history:
+        history = st.session_state.chat_history
+        if not history:
             st.caption("No history yet.")
         else:
-            for i, chat in enumerate(reversed(st.session_state.chat_history)):
-                real_index = len(st.session_state.chat_history) - 1 - i
-                is_active  = (st.session_state.current_chat_index == real_index)
-                label      = f"▶ {chat.get('title','New Chat')}" if is_active else f"💬 {chat.get('title','New Chat')}"
-                if st.button(label, key=f"history_{real_index}", use_container_width=True):
+            for chat in reversed(history):
+                is_active = (st.session_state.current_chat_id == chat["id"])
+                label     = f"▶ {chat['title']}" if is_active else f"💬 {chat['title']}"
+                if st.button(label, key=f"h_{chat['id']}", use_container_width=True):
                     _flush_current_chat()
-                    st.session_state.messages = chat.get("messages", []).copy()
-                    st.session_state.current_chat_index = real_index
+                    st.session_state.messages        = chat["messages"]
+                    st.session_state.current_chat_id = chat["id"]
                     st.rerun()
 
     model = get_chat_model(model_name, temperature, max_new_tokens)
