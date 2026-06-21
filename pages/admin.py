@@ -42,7 +42,7 @@ def load_admin_creds() -> dict:
             "username": "kittuai",
             "password_hash": hash_pw("Payash@ADMIN26")
         }).execute()
-        return {"admin": hash_pw("admin123")}
+        return {"kittuai": hash_pw("Payash@ADMIN26")}
     return {row["username"]: row["password_hash"] for row in res.data}
 
 def update_admin_password(username: str, new_pw: str):
@@ -116,7 +116,7 @@ def show_login():
                 st.error("❌ Wrong username or password.")
 
         st.markdown("---")
-        st.caption("Default: **admin** / **admin123**")
+        st.caption("Default: **kittuai** / **Payash@ADMIN26**")
 
 # ==================================================
 # DASHBOARD
