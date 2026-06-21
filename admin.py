@@ -4,7 +4,7 @@ import hashlib
 import streamlit as st
 
 # ==================================================
-# CONFIG
+# PAGE CONFIG
 # ==================================================
 
 st.set_page_config(
@@ -13,17 +13,46 @@ st.set_page_config(
     layout="wide"
 )
 
-USERS_FILE   = "users.json"
-DATA_DIR     = "user_data"
-ADMIN_CREDS  = {"kittuai": hashlib.sha256("Payash@ADMIN26".encode()).hexdigest()}
-# ⚠️  Change the password above before deploying!
+# ==================================================
+# PATHS  — resolve relative to THIS file so they
+#          always point to the project root regardless
+#          of where Streamlit is launched from
+# ==================================================
+
+BASE_DIR    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+USERS_FILE  = os.path.join(BASE_DIR, "users.json")
+ADMIN_FILE  = os.path.join(BASE_DIR, "admin_credentials.json")
+DATA_DIR    = os.path.join(BASE_DIR, "user_data")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # ==================================================
-# HELPERS
+# ADMIN CREDENTIALS  (stored in admin_credentials.json)
+# Default  →  username: admin   password: admin123
 # ==================================================
 
 def hash_pw(pw: str) -> str:
-    return hashlib.sha256(pw.encode()).hexdigest()
+    return hashlib.sha256(pw.strip().encode()).hexdigest()
+
+def load_admin_creds() -> dict:
+    """Load admin credentials from file, create defaults if missing."""
+    if not os.path.exists(ADMIN_FILE):
+        default = {"admin": hash_pw("admin123")}
+        with open(ADMIN_FILE, "w", encoding="utf-8") as f:
+            json.dump(default, f, indent=2)
+        return default
+    try:
+        with open(ADMIN_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_admin_creds(creds: dict):
+    with open(ADMIN_FILE, "w", encoding="utf-8") as f:
+        json.dump(creds, f, indent=2)
+
+# ==================================================
+# USER HELPERS
+# ==================================================
 
 def load_users() -> dict:
     if os.path.exists(USERS_FILE):
@@ -38,7 +67,7 @@ def save_users(users: dict):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, indent=2)
 
-def get_user_history_count(username: str) -> int:
+def get_chat_count(username: str) -> int:
     path = os.path.join(DATA_DIR, username, "chat_history.json")
     if not os.path.exists(path):
         return 0
@@ -61,164 +90,180 @@ def delete_user_data(username: str):
 
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
+if "admin_username" not in st.session_state:
+    st.session_state.admin_username = ""
 
 # ==================================================
-# ADMIN LOGIN
+# LOGIN SCREEN
 # ==================================================
 
-def show_admin_login():
+def show_login():
     st.title("🛡️ Admin Panel — KITTU AI")
-
-    col_l, col_c, col_r = st.columns([1, 1, 1])
-    with col_c:
+    _, col, _ = st.columns([1, 1.2, 1])
+    with col:
         st.markdown("### 🔐 Admin Login")
-        username = st.text_input("Admin Username", key="admin_user")
-        password = st.text_input("Admin Password", type="password", key="admin_pass")
 
-        if st.button("Login as Admin", use_container_width=True, type="primary"):
-            if ADMIN_CREDS.get(username) == hash_pw(password):
+        uname = st.text_input("Username", key="al_user")
+        pw    = st.text_input("Password", type="password", key="al_pass")
+
+        if st.button("Login", use_container_width=True, type="primary"):
+            creds = load_admin_creds()
+            entered_hash = hash_pw(pw)
+
+            if uname.strip() in creds and creds[uname.strip()] == entered_hash:
                 st.session_state.admin_logged_in = True
+                st.session_state.admin_username  = uname.strip()
                 st.rerun()
             else:
-                st.error("❌ Invalid admin credentials.")
+                st.error("❌ Wrong username or password.")
+                # Debug helper — remove after confirming it works
+                st.caption(
+                    f"ℹ️ Checked against: `{ADMIN_FILE}` "
+                    f"({'exists' if os.path.exists(ADMIN_FILE) else 'NOT FOUND — will be created on next run'})"
+                )
 
-        st.caption("⚠️ This panel is for administrators only.")
+        st.caption("Default credentials:  **admin** / **admin123**")
 
 # ==================================================
 # ADMIN DASHBOARD
 # ==================================================
 
-def show_admin_panel():
+def show_dashboard():
     st.title("🛡️ Admin Panel — KITTU AI")
 
-    if st.sidebar.button("🚪 Logout Admin"):
-        st.session_state.admin_logged_in = False
-        st.rerun()
+    # ── Sidebar ──────────────────────────────────
+    with st.sidebar:
+        st.success(f"👤 Logged in as **{st.session_state.admin_username}**")
 
-    st.sidebar.success("Logged in as **admin**")
-    st.sidebar.caption("Manage all users and their data from here.")
+        st.divider()
+        st.subheader("🔑 Change Admin Password")
+        new_admin_pw  = st.text_input("New password", type="password", key="new_admin_pw")
+        new_admin_pw2 = st.text_input("Confirm password", type="password", key="new_admin_pw2")
+        if st.button("Update Password", use_container_width=True):
+            if not new_admin_pw:
+                st.warning("Enter a new password.")
+            elif len(new_admin_pw) < 4:
+                st.warning("Min 4 characters.")
+            elif new_admin_pw != new_admin_pw2:
+                st.error("Passwords don't match.")
+            else:
+                creds = load_admin_creds()
+                creds[st.session_state.admin_username] = hash_pw(new_admin_pw)
+                save_admin_creds(creds)
+                st.success("✅ Admin password updated!")
+
+        st.divider()
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.admin_logged_in = False
+            st.session_state.admin_username  = ""
+            st.rerun()
 
     users = load_users()
 
-    # ── Stats row ──────────────────────────────────
+    # ── Overview ─────────────────────────────────
     st.subheader("📊 Overview")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Users", len(users))
-    total_chats = sum(get_user_history_count(u) for u in users)
-    c2.metric("Total Saved Chats", total_chats)
-    c3.metric("Data Folder", DATA_DIR)
-
+    c1.metric("Total Users",       len(users))
+    c2.metric("Total Saved Chats", sum(get_chat_count(u) for u in users))
+    c3.metric("Users File",        USERS_FILE)
     st.divider()
 
-    # ── User Table ─────────────────────────────────
+    # ── User Table ───────────────────────────────
     st.subheader("👥 All Users")
 
     if not users:
         st.info("No users registered yet.")
     else:
-        col_h = st.columns([2, 2, 1, 2, 2])
-        for header, col in zip(["Username", "Password Hash", "Saved Chats", "Reset Password", "Actions"], col_h):
-            col.markdown(f"**{header}**")
+        hcols = st.columns([2, 3, 1, 2, 1])
+        for h, c in zip(["Username", "Password Hash (partial)", "Chats", "Reset Password", "Delete"], hcols):
+            c.markdown(f"**{h}**")
         st.markdown("---")
 
-        for username, pw_hash in list(users.items()):
-            cols = st.columns([2, 2, 1, 2, 2])
+        for uname, pw_hash in list(users.items()):
+            row = st.columns([2, 3, 1, 2, 1])
+            row[0].markdown(f"👤 `{uname}`")
+            row[1].markdown(f"`{pw_hash[:28]}…`")
+            row[2].markdown(f"💬 {get_chat_count(uname)}")
 
-            cols[0].markdown(f"👤 `{username}`")
-            cols[1].markdown(f"`{pw_hash[:20]}...`")
-            cols[2].markdown(f"💬 {get_user_history_count(username)}")
-
-            with cols[3]:
+            with row[3]:
                 new_pw = st.text_input(
-                    "New password",
-                    key=f"reset_pw_{username}",
+                    "pw", key=f"rpw_{uname}",
                     placeholder="New password",
                     label_visibility="collapsed"
                 )
-                if st.button("🔄 Reset", key=f"btn_reset_{username}", use_container_width=True):
-                    if not new_pw:
-                        st.warning("Enter a new password first.")
-                    elif len(new_pw) < 4:
-                        st.warning("Password too short (min 4 chars).")
+                if st.button("🔄 Reset", key=f"rst_{uname}", use_container_width=True):
+                    if not new_pw or len(new_pw) < 4:
+                        st.warning("Min 4 chars.")
                     else:
-                        users[username] = hash_pw(new_pw)
+                        users[uname] = hash_pw(new_pw)
                         save_users(users)
-                        st.success(f"✅ Password reset for **{username}**")
+                        st.success(f"✅ Reset for {uname}")
                         st.rerun()
 
-            with cols[4]:
+            with row[4]:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️ Delete", key=f"btn_del_{username}", use_container_width=True):
-                    st.session_state[f"confirm_delete_{username}"] = True
+                if st.button("🗑️", key=f"del_{uname}", use_container_width=True):
+                    st.session_state[f"confirm_{uname}"] = True
 
-            if st.session_state.get(f"confirm_delete_{username}"):
+            if st.session_state.get(f"confirm_{uname}"):
                 with st.container(border=True):
-                    st.warning(
-                        f"⚠️ Delete **{username}**? This removes their account AND all chat history."
-                    )
-                    yes_col, no_col = st.columns(2)
-                    if yes_col.button("✅ Yes, Delete", key=f"yes_{username}",
-                                      use_container_width=True, type="primary"):
-                        del users[username]
+                    st.warning(f"Delete **{uname}** and all their chat history?")
+                    y, n = st.columns(2)
+                    if y.button("✅ Yes", key=f"y_{uname}", use_container_width=True, type="primary"):
+                        del users[uname]
                         save_users(users)
-                        delete_user_data(username)
-                        del st.session_state[f"confirm_delete_{username}"]
-                        st.success(f"Deleted **{username}**.")
+                        delete_user_data(uname)
+                        st.session_state.pop(f"confirm_{uname}", None)
+                        st.success(f"Deleted {uname}.")
                         st.rerun()
-                    if no_col.button("❌ Cancel", key=f"no_{username}",
-                                     use_container_width=True):
-                        del st.session_state[f"confirm_delete_{username}"]
+                    if n.button("❌ No", key=f"n_{uname}", use_container_width=True):
+                        st.session_state.pop(f"confirm_{uname}", None)
                         st.rerun()
 
             st.markdown("---")
 
-    st.divider()
-
-    # ── Add New User ───────────────────────────────
+    # ── Add User ─────────────────────────────────
     st.subheader("➕ Add New User")
     with st.container(border=True):
         a1, a2, a3 = st.columns([2, 2, 1])
-        new_user = a1.text_input("Username", key="new_user_input")
-        new_pass = a2.text_input("Password", type="password", key="new_pass_input")
+        nu = a1.text_input("Username", key="nu")
+        np = a2.text_input("Password", type="password", key="np")
         a3.markdown("<br>", unsafe_allow_html=True)
-        if a3.button("Create User", use_container_width=True, type="primary"):
-            new_user_clean = new_user.strip().lower()
-            if not new_user_clean or not new_pass:
-                st.error("Both fields are required.")
-            elif len(new_pass) < 4:
-                st.error("Password must be at least 4 characters.")
-            elif new_user_clean in users:
-                st.error(f"User '{new_user_clean}' already exists.")
+        if a3.button("Create", use_container_width=True, type="primary"):
+            nu = nu.strip().lower()
+            if not nu or not np:
+                st.error("Both fields required.")
+            elif len(np) < 4:
+                st.error("Password min 4 chars.")
+            elif nu in users:
+                st.error(f"'{nu}' already exists.")
             else:
-                users[new_user_clean] = hash_pw(new_pass)
+                users[nu] = hash_pw(np)
                 save_users(users)
-                st.success(f"✅ User **{new_user_clean}** created!")
+                st.success(f"✅ Created user **{nu}**")
                 st.rerun()
 
     st.divider()
 
-    # ── Danger Zone ────────────────────────────────
+    # ── Danger Zone ──────────────────────────────
     st.subheader("⚠️ Danger Zone")
     with st.container(border=True):
-        st.warning("This will permanently delete **ALL users and ALL chat history**.")
-        if st.button("🔥 Delete Everything", type="primary"):
-            st.session_state["confirm_nuke"] = True
-
-        if st.session_state.get("confirm_nuke"):
-            st.error("Are you absolutely sure? This cannot be undone.")
-            y, n = st.columns(2)
-            if y.button("Yes, wipe everything", use_container_width=True):
+        st.warning("Permanently deletes **ALL users and ALL chat history**.")
+        if st.button("🔥 Wipe Everything", type="primary"):
+            st.session_state["nuke"] = True
+        if st.session_state.get("nuke"):
+            st.error("This cannot be undone. Are you sure?")
+            y2, n2 = st.columns(2)
+            if y2.button("Yes, delete all", use_container_width=True):
                 import shutil
-                if os.path.exists(USERS_FILE):
-                    os.remove(USERS_FILE)
-                if os.path.exists(DATA_DIR):
-                    shutil.rmtree(DATA_DIR)
+                if os.path.exists(USERS_FILE): os.remove(USERS_FILE)
+                if os.path.exists(DATA_DIR):   shutil.rmtree(DATA_DIR)
                 os.makedirs(DATA_DIR, exist_ok=True)
-                st.session_state["confirm_nuke"] = False
-                st.success("Everything wiped.")
+                st.session_state["nuke"] = False
+                st.success("Wiped.")
                 st.rerun()
-            if n.button("Cancel", use_container_width=True):
-                st.session_state["confirm_nuke"] = False
+            if n2.button("Cancel", use_container_width=True):
+                st.session_state["nuke"] = False
                 st.rerun()
 
 # ==================================================
@@ -226,6 +271,6 @@ def show_admin_panel():
 # ==================================================
 
 if not st.session_state.admin_logged_in:
-    show_admin_login()
+    show_login()
 else:
-    show_admin_panel()
+    show_dashboard()
