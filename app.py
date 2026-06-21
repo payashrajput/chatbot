@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🤖 KITTU AI")
+st.title("🤖AI CHATBOT")
 
 HISTORY_FILE = "chat_history.json"
 
