@@ -359,53 +359,113 @@ def show_main_app():
 
     mode_col1, mode_col2, mode_col3 = st.columns([1, 1, 4])
     with mode_col1:
-        if st.button("📁 Upload Photo", use_container_width=True):
-            st.session_state.input_mode = (
-                "text" if st.session_state.input_mode == "upload" else "upload"
-            )
-            st.session_state.pending_image_b64  = None
-            st.session_state.pending_image_mime = None
-    with mode_col2:
-        if st.button("📷 Camera", use_container_width=True):
-            st.session_state.input_mode = (
-                "text" if st.session_state.input_mode == "camera" else "camera"
-            )
-            st.session_state.pending_image_b64  = None
-            st.session_state.pending_image_mime = None
+        upload_active = st.session_state.input_mode == "upload"
+        if st.button(
+            "✅ Upload Photo" if upload_active else "📁 Upload Photo",
+            use_container_width=True,
+            type="primary" if upload_active else "secondary",
+        ):
+            if st.session_state.input_mode == "upload":
+                # Close uploader — but only clear image if user explicitly removes it
+                st.session_state.input_mode = "text"
+            else:
+                st.session_state.input_mode = "upload"
+            st.rerun()
 
+    with mode_col2:
+        cam_active = st.session_state.input_mode == "camera"
+        if st.button(
+            "✅ Camera" if cam_active else "📷 Camera",
+            use_container_width=True,
+            type="primary" if cam_active else "secondary",
+        ):
+            if st.session_state.input_mode == "camera":
+                st.session_state.input_mode = "text"
+            else:
+                st.session_state.input_mode = "camera"
+            st.rerun()
+
+    # --------------------------------------------------
+    # CAMERA PERMISSION POPUP via JS (runs once when camera mode opens)
+    # --------------------------------------------------
+    if st.session_state.input_mode == "camera":
+        # Inject a tiny JS snippet that calls getUserMedia so the browser
+        # shows its native "Allow camera access?" permission dialog.
+        # This fires before st.camera_input renders, giving the user a
+        # proper permission prompt instead of a silent failure.
+        st.components.v1.html(
+            """
+            <script>
+            (function() {
+                // Only request if not already granted
+                if (!window._kittuCamRequested) {
+                    window._kittuCamRequested = true;
+                    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                        navigator.mediaDevices.getUserMedia({ video: true })
+                            .then(function(stream) {
+                                // Stop tracks immediately — we just needed the permission grant.
+                                // Streamlit's camera_input will open its own stream.
+                                stream.getTracks().forEach(function(t) { t.stop(); });
+                            })
+                            .catch(function(err) {
+                                // Permission denied — show a friendly message in the parent page
+                                var msg = document.createElement('div');
+                                msg.style.cssText =
+                                    'position:fixed;top:16px;left:50%;transform:translateX(-50%);' +
+                                    'background:#ff4b4b;color:#fff;padding:12px 24px;border-radius:8px;' +
+                                    'font-family:sans-serif;font-size:14px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.3);';
+                                msg.textContent =
+                                    '❌ Camera access denied. Please allow camera in your browser settings and try again.';
+                                document.body.appendChild(msg);
+                                setTimeout(function() { msg.remove(); }, 5000);
+                            });
+                    }
+                }
+            })();
+            </script>
+            """,
+            height=0,
+        )
+
+    # --------------------------------------------------
     # Show uploader or camera widget based on mode
+    # --------------------------------------------------
     if st.session_state.input_mode == "upload":
         uploaded_file = st.file_uploader(
-            "Choose an image file",
+            "📂 Choose a photo (JPG, PNG, WEBP, GIF)",
             type=["jpg", "jpeg", "png", "webp", "gif"],
-            label_visibility="collapsed",
         )
         if uploaded_file is not None:
             mime = get_image_mime_type(uploaded_file.name)
             b64  = image_to_base64(uploaded_file.read())
             st.session_state.pending_image_b64  = b64
             st.session_state.pending_image_mime = mime
-            st.image(f"data:{mime};base64,{b64}", caption="📎 Image ready to send", width=250)
+            # Show preview
+            st.image(f"data:{mime};base64,{b64}", caption="📎 Image ready to send", width=300)
+        elif st.session_state.pending_image_b64 and st.session_state.pending_image_mime:
+            # Uploader cleared by user — respect that
+            pass
 
     elif st.session_state.input_mode == "camera":
-        camera_photo = st.camera_input("Take a photo")
+        st.info("📷 Point your camera and click **Take photo**. Make sure to **Allow** camera access when prompted by your browser.", icon="ℹ️")
+        camera_photo = st.camera_input("Take a photo", label_visibility="collapsed")
         if camera_photo is not None:
             b64 = image_to_base64(camera_photo.read())
             st.session_state.pending_image_b64  = b64
             st.session_state.pending_image_mime = "image/jpeg"
             st.image(
                 f"data:image/jpeg;base64,{b64}",
-                caption="📷 Photo ready to send",
-                width=250,
+                caption="📷 Photo captured — ready to send",
+                width=300,
             )
 
-    # Show a pill if an image is staged from a previous widget interaction
+    # Show staged image badge when panel is closed
     if st.session_state.pending_image_b64 and st.session_state.input_mode == "text":
-        st.info("🖼️ An image is staged. Switch to Upload or Camera mode to see it or clear it.")
+        st.success("🖼️ Image attached and ready to send with your next message.")
 
     # Clear staged image button
     if st.session_state.pending_image_b64:
-        if st.button("❌ Remove image", key="clear_img"):
+        if st.button("❌ Remove attached image", key="clear_img"):
             st.session_state.pending_image_b64  = None
             st.session_state.pending_image_mime = None
             st.session_state.input_mode         = "text"
