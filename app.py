@@ -1,5 +1,6 @@
 import os
 import time
+import base64
 import hashlib
 import streamlit as st
 from supabase import create_client, Client
@@ -43,7 +44,6 @@ def register_user(username: str, password: str) -> tuple[bool, str]:
     if len(password) < 4:
         return False, "Password must be at least 4 characters."
     sb = get_supabase()
-    # Check if exists
     res = sb.table("users").select("username").eq("username", username).execute()
     if res.data:
         return False, "Username already exists. Please choose another."
@@ -94,6 +94,40 @@ def delete_chat_entry(row_id):
     sb.table("chat_history").delete().eq("id", row_id).execute()
 
 # ==================================================
+# IMAGE HELPERS
+# ==================================================
+
+def image_to_base64(image_bytes: bytes) -> str:
+    """Convert image bytes to base64 string."""
+    return base64.b64encode(image_bytes).decode("utf-8")
+
+def build_vision_message(prompt: str, image_b64: str, mime_type: str = "image/jpeg") -> HumanMessage:
+    """Build a HumanMessage with both text and image for vision models."""
+    return HumanMessage(content=[
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime_type};base64,{image_b64}"
+            }
+        },
+        {
+            "type": "text",
+            "text": prompt
+        }
+    ])
+
+def get_image_mime_type(file_name: str) -> str:
+    """Determine MIME type from file extension."""
+    ext = file_name.lower().split(".")[-1]
+    return {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+    }.get(ext, "image/jpeg")
+
+# ==================================================
 # SESSION STATE INIT
 # ==================================================
 
@@ -102,8 +136,11 @@ for key, default in [
     ("username", ""),
     ("auth_mode", "login"),
     ("messages", []),
-    ("chat_history", []),       # list of {id, title, messages}
-    ("current_chat_id", None),  # supabase row id
+    ("chat_history", []),
+    ("current_chat_id", None),
+    ("input_mode", "text"),       # "text", "upload", or "camera"
+    ("pending_image_b64", None),  # base64 of staged image
+    ("pending_image_mime", None), # mime type of staged image
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -116,7 +153,8 @@ def _flush_current_chat():
     if not st.session_state.messages:
         return
     title = next(
-        (m["content"][:50] for m in st.session_state.messages if m["role"] == "user"),
+        (m["content"][:50] if isinstance(m["content"], str) else "Image Chat"
+         for m in st.session_state.messages if m["role"] == "user"),
         "New Chat"
     )
     new_id = save_chat_entry(
@@ -126,7 +164,6 @@ def _flush_current_chat():
         row_id=st.session_state.current_chat_id
     )
     st.session_state.current_chat_id = new_id
-    # Refresh local cache
     st.session_state.chat_history = load_user_history(st.session_state.username)
 
 def start_new_chat():
@@ -134,6 +171,8 @@ def start_new_chat():
         _flush_current_chat()
     st.session_state.messages        = []
     st.session_state.current_chat_id = None
+    st.session_state.pending_image_b64  = None
+    st.session_state.pending_image_mime = None
 
 # ==================================================
 # LOGIN / REGISTER SCREEN
@@ -200,6 +239,26 @@ def get_chat_model(repo_id, temp, tokens):
     return ChatHuggingFace(llm=llm)
 
 # ==================================================
+# RENDER CHAT MESSAGE (handles text + image history)
+# ==================================================
+
+def render_message(msg: dict):
+    """Render a stored message, which may contain image data."""
+    with st.chat_message(msg["role"]):
+        content = msg["content"]
+        if isinstance(content, list):
+            # Multi-part message (image + text)
+            for part in content:
+                if part.get("type") == "text":
+                    st.markdown(part["text"])
+                elif part.get("type") == "image_url":
+                    url = part["image_url"]["url"]
+                    # Display inline base64 image
+                    st.image(url, width=300)
+        else:
+            st.markdown(content)
+
+# ==================================================
 # MAIN APP
 # ==================================================
 
@@ -209,12 +268,28 @@ def show_main_app():
     with st.sidebar:
         st.title("⚙️ Settings")
 
-        model_name = st.selectbox("Choose Model", [
+        # Text models
+        TEXT_MODELS = [
             "meta-llama/Llama-3.1-8B-Instruct",
             "Qwen/Qwen2.5-72B-Instruct",
             "mistralai/Mistral-7B-Instruct-v0.3",
             "deepseek-ai/DeepSeek-V3-0324",
-        ])
+        ]
+        # Vision models (support image input)
+        VISION_MODELS = [
+            "llava-hf/llava-1.5-7b-hf",
+            "Qwen/Qwen2-VL-7B-Instruct",
+            "microsoft/Phi-3.5-vision-instruct",
+        ]
+
+        has_image = st.session_state.pending_image_b64 is not None
+
+        if has_image:
+            st.info("🖼️ Vision mode active — using a vision model.")
+            model_name = st.selectbox("Vision Model", VISION_MODELS)
+        else:
+            model_name = st.selectbox("Choose Model", TEXT_MODELS)
+
         temperature    = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
         max_new_tokens = st.slider("Max Tokens",  128, 4096, 1024)
 
@@ -231,6 +306,8 @@ def show_main_app():
                     delete_chat_entry(st.session_state.current_chat_id)
                 st.session_state.messages        = []
                 st.session_state.current_chat_id = None
+                st.session_state.pending_image_b64  = None
+                st.session_state.pending_image_mime = None
                 st.session_state.chat_history    = load_user_history(st.session_state.username)
                 st.rerun()
 
@@ -239,6 +316,8 @@ def show_main_app():
             st.session_state.chat_history    = []
             st.session_state.messages        = []
             st.session_state.current_chat_id = None
+            st.session_state.pending_image_b64  = None
+            st.session_state.pending_image_mime = None
             st.success("History cleared!")
             st.rerun()
 
@@ -246,7 +325,8 @@ def show_main_app():
 
         if st.button("🚪 Logout", use_container_width=True):
             _flush_current_chat()
-            for k in ["logged_in", "username", "messages", "chat_history", "current_chat_id"]:
+            for k in ["logged_in", "username", "messages", "chat_history", "current_chat_id",
+                      "pending_image_b64", "pending_image_mime"]:
                 del st.session_state[k]
             st.rerun()
 
@@ -266,25 +346,120 @@ def show_main_app():
                     st.session_state.current_chat_id = chat["id"]
                     st.rerun()
 
-    model = get_chat_model(model_name, temperature, max_new_tokens)
-
+    # --------------------------------------------------
+    # CHAT MESSAGES
+    # --------------------------------------------------
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+        render_message(msg)
 
-    prompt = st.chat_input("Ask me anything...")
+    # --------------------------------------------------
+    # IMAGE INPUT CONTROLS  (above chat input)
+    # --------------------------------------------------
+    st.markdown("#### 📎 Attach an Image (optional)")
+
+    mode_col1, mode_col2, mode_col3 = st.columns([1, 1, 4])
+    with mode_col1:
+        if st.button("📁 Upload Photo", use_container_width=True):
+            st.session_state.input_mode = (
+                "text" if st.session_state.input_mode == "upload" else "upload"
+            )
+            st.session_state.pending_image_b64  = None
+            st.session_state.pending_image_mime = None
+    with mode_col2:
+        if st.button("📷 Camera", use_container_width=True):
+            st.session_state.input_mode = (
+                "text" if st.session_state.input_mode == "camera" else "camera"
+            )
+            st.session_state.pending_image_b64  = None
+            st.session_state.pending_image_mime = None
+
+    # Show uploader or camera widget based on mode
+    if st.session_state.input_mode == "upload":
+        uploaded_file = st.file_uploader(
+            "Choose an image file",
+            type=["jpg", "jpeg", "png", "webp", "gif"],
+            label_visibility="collapsed",
+        )
+        if uploaded_file is not None:
+            mime = get_image_mime_type(uploaded_file.name)
+            b64  = image_to_base64(uploaded_file.read())
+            st.session_state.pending_image_b64  = b64
+            st.session_state.pending_image_mime = mime
+            st.image(f"data:{mime};base64,{b64}", caption="📎 Image ready to send", width=250)
+
+    elif st.session_state.input_mode == "camera":
+        camera_photo = st.camera_input("Take a photo")
+        if camera_photo is not None:
+            b64 = image_to_base64(camera_photo.read())
+            st.session_state.pending_image_b64  = b64
+            st.session_state.pending_image_mime = "image/jpeg"
+            st.image(
+                f"data:image/jpeg;base64,{b64}",
+                caption="📷 Photo ready to send",
+                width=250,
+            )
+
+    # Show a pill if an image is staged from a previous widget interaction
+    if st.session_state.pending_image_b64 and st.session_state.input_mode == "text":
+        st.info("🖼️ An image is staged. Switch to Upload or Camera mode to see it or clear it.")
+
+    # Clear staged image button
+    if st.session_state.pending_image_b64:
+        if st.button("❌ Remove image", key="clear_img"):
+            st.session_state.pending_image_b64  = None
+            st.session_state.pending_image_mime = None
+            st.session_state.input_mode         = "text"
+            st.rerun()
+
+    st.markdown("---")
+
+    # --------------------------------------------------
+    # CHAT INPUT
+    # --------------------------------------------------
+    prompt = st.chat_input("Ask me anything… or describe the image above ⬆️")
 
     if prompt:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        model = get_chat_model(model_name, temperature, max_new_tokens)
 
-        conversation = [SystemMessage(content="You are KITTU AI, a helpful and friendly assistant.")]
-        for m in st.session_state.messages:
+        image_b64  = st.session_state.pending_image_b64
+        image_mime = st.session_state.pending_image_mime or "image/jpeg"
+
+        # Build stored message content
+        if image_b64:
+            user_content = [
+                {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}},
+                {"type": "text", "text": prompt},
+            ]
+        else:
+            user_content = prompt
+
+        st.session_state.messages.append({"role": "user", "content": user_content})
+
+        # Display user message immediately
+        render_message({"role": "user", "content": user_content})
+
+        # Build conversation for the model
+        conversation = [SystemMessage(content="You are KITTU AI, a helpful and friendly assistant. When given an image, describe and analyze it thoroughly before answering any questions about it.")]
+
+        for m in st.session_state.messages[:-1]:  # history (excluding current)
             if m["role"] == "user":
-                conversation.append(HumanMessage(content=m["content"]))
+                if isinstance(m["content"], list):
+                    conversation.append(HumanMessage(content=m["content"]))
+                else:
+                    conversation.append(HumanMessage(content=m["content"]))
             else:
-                conversation.append(AIMessage(content=m["content"]))
+                content = m["content"]
+                if isinstance(content, list):
+                    text_parts = " ".join(p["text"] for p in content if p.get("type") == "text")
+                    conversation.append(AIMessage(content=text_parts))
+                else:
+                    conversation.append(AIMessage(content=content))
+
+        # Add current message
+        if image_b64:
+            conversation.append(build_vision_message(prompt, image_b64, image_mime))
+        else:
+            conversation.append(HumanMessage(content=prompt))
 
         with st.chat_message("assistant"):
             placeholder = st.empty()
@@ -303,6 +478,12 @@ def show_main_app():
                 placeholder.error(answer)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
+
+        # Clear staged image after sending
+        st.session_state.pending_image_b64  = None
+        st.session_state.pending_image_mime = None
+        st.session_state.input_mode         = "text"
+
         _flush_current_chat()
 
 # ==================================================
