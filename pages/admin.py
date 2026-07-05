@@ -34,16 +34,37 @@ def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.strip().encode()).hexdigest()
 
 def load_admin_creds() -> dict:
+    """Load admin credentials from Supabase.
+
+    IMPORTANT: this never hardcodes a password in source code. The very
+    first admin account is bootstrapped ONLY from the ADMIN_BOOTSTRAP_USERNAME
+    / ADMIN_BOOTSTRAP_PASSWORD secrets (set these in your Streamlit/HF
+    secrets, never commit them to the repo). Once that first login succeeds,
+    change the password from the dashboard and you can remove those secrets.
+    """
     sb = get_supabase()
     res = sb.table("admin_credentials").select("username, password_hash").execute()
-    if not res.data:
-        # First time: insert default admin
-        sb.table("admin_credentials").insert({
-            "username": "admin",
-            "password_hash": hash_pw("Payash@ADMIN26")
-        }).execute()
-        return {"admin": hash_pw("Payash@ADMIN26")}
-    return {row["username"]: row["password_hash"] for row in res.data}
+    if res.data:
+        return {row["username"]: row["password_hash"] for row in res.data}
+
+    # No admin exists yet — bootstrap from secrets, not from hardcoded text.
+    bootstrap_user = os.environ.get("ADMIN_BOOTSTRAP_USERNAME", "")
+    bootstrap_pw   = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "")
+    if not bootstrap_user or not bootstrap_pw:
+        st.error(
+            "❌ No admin account exists yet, and ADMIN_BOOTSTRAP_USERNAME / "
+            "ADMIN_BOOTSTRAP_PASSWORD secrets are not set. Add them in your "
+            "app's secrets, reload this page once to create the account, "
+            "then remove those secrets and manage the password from the "
+            "dashboard instead."
+        )
+        st.stop()
+
+    sb.table("admin_credentials").insert({
+        "username": bootstrap_user.strip(),
+        "password_hash": hash_pw(bootstrap_pw)
+    }).execute()
+    return {bootstrap_user.strip(): hash_pw(bootstrap_pw)}
 
 def update_admin_password(username: str, new_pw: str):
     sb = get_supabase()
@@ -93,6 +114,8 @@ if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 if "admin_username" not in st.session_state:
     st.session_state.admin_username = ""
+if "admin_login_attempts" not in st.session_state:
+    st.session_state.admin_login_attempts = 0
 
 # ==================================================
 # LOGIN
@@ -109,14 +132,16 @@ def show_login():
         if st.button("Login", use_container_width=True, type="primary"):
             creds = load_admin_creds()
             if uname.strip() in creds and creds[uname.strip()] == hash_pw(pw):
-                st.session_state.admin_logged_in = True
-                st.session_state.admin_username  = uname.strip()
+                st.session_state.admin_logged_in     = True
+                st.session_state.admin_username      = uname.strip()
+                st.session_state.admin_login_attempts = 0
                 st.rerun()
             else:
+                st.session_state.admin_login_attempts += 1
                 st.error("❌ Wrong username or password.")
-
-        st.markdown("---")
-        st.caption("Default: **admin** / **Payash@ADMIN26**")
+        # NOTE: no default credentials are ever shown here. The first admin
+        # account is created from ADMIN_BOOTSTRAP_USERNAME/PASSWORD secrets —
+        # see load_admin_creds() — never from on-screen text.
 
 # ==================================================
 # DASHBOARD
@@ -134,8 +159,8 @@ def show_dashboard():
         if st.button("Update", use_container_width=True):
             if not p1:
                 st.warning("Enter a password.")
-            elif len(p1) < 4:
-                st.warning("Min 4 characters.")
+            elif len(p1) < 8:
+                st.warning("Use at least 8 characters.")
             elif p1 != p2:
                 st.error("Passwords don't match.")
             else:
@@ -161,21 +186,19 @@ def show_dashboard():
     if not users:
         st.info("No users registered yet.")
     else:
-        hcols = st.columns([2, 3, 1, 2, 1])
-        for h, c in zip(["Username", "Password Hash", "Chats", "Reset Password", "Delete"], hcols):
+        hcols = st.columns([3, 1, 2, 1])
+        for h, c in zip(["Username", "Chats", "Reset Password", "Delete"], hcols):
             c.markdown(f"**{h}**")
         st.markdown("---")
 
         for user in users:
-            uname   = user["username"]
-            pw_hash = user["password_hash"]
-            row     = st.columns([2, 3, 1, 2, 1])
+            uname = user["username"]
+            row   = st.columns([3, 1, 2, 1])
 
             row[0].markdown(f"👤 `{uname}`")
-            row[1].markdown(f"`{pw_hash[:26]}…`")
-            row[2].markdown(f"💬 {get_chat_count(uname)}")
+            row[1].markdown(f"💬 {get_chat_count(uname)}")
 
-            with row[3]:
+            with row[2]:
                 new_pw = st.text_input("pw", key=f"rpw_{uname}",
                                        placeholder="New password",
                                        label_visibility="collapsed")
@@ -187,7 +210,7 @@ def show_dashboard():
                         st.success(f"✅ Reset for {uname}")
                         st.rerun()
 
-            with row[4]:
+            with row[3]:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("🗑️", key=f"del_{uname}", use_container_width=True):
                     st.session_state[f"confirm_{uname}"] = True
