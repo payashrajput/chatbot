@@ -47,9 +47,13 @@ def get_supabase() -> Client:
 # every load).
 # ==================================================
 
-@st.cache_resource
 def get_cookie_manager():
-    return stx.CookieManager()
+    # NOTE: intentionally NOT wrapped in @st.cache_resource.
+    # CookieManager() renders an internal component (which Streamlit treats
+    # as a "widget call"), and widget calls inside cached functions raise a
+    # CachedWidgetWarning / behave unpredictably. The component manages its
+    # own state across reruns on its own, so caching isn't needed here.
+    return stx.CookieManager(key="kittu_cookie_manager")
 
 cookie_manager = get_cookie_manager()
 
@@ -115,41 +119,60 @@ def create_session(username: str) -> str:
 def validate_session(token: str):
     if not token:
         return None
-    sb = get_supabase()
-    res = sb.table("sessions").select("username, expires_at").eq("token", token).execute()
-    if not res.data:
+    try:
+        sb = get_supabase()
+        res = sb.table("sessions").select("username, expires_at").eq("token", token).execute()
+        if not res.data:
+            return None
+        row = res.data[0]
+        expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+        if expires_at < datetime.now(timezone.utc):
+            delete_session(token)
+            return None
+        return row["username"]
+    except Exception:
+        # Sessions table missing/unreachable - treat as "not logged in"
+        # rather than crashing the whole app.
         return None
-    row = res.data[0]
-    expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
-    if expires_at < datetime.now(timezone.utc):
-        delete_session(token)
-        return None
-    return row["username"]
 
 def delete_session(token: str):
     if not token:
         return
-    sb = get_supabase()
-    sb.table("sessions").delete().eq("token", token).execute()
+    try:
+        sb = get_supabase()
+        sb.table("sessions").delete().eq("token", token).execute()
+    except Exception:
+        pass
 
 
 def start_persistent_login(username: str):
     """Create a session row + browser cookie so the user stays logged in
-    across page reloads, app restarts, and mobile browser tab suspensions."""
-    token = create_session(username)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DURATION_DAYS)
-    cookie_manager.set(
-        SESSION_COOKIE_NAME,
-        token,
-        expires_at=expires_at,
-        key="set_session_cookie",
-    )
+    across page reloads, app restarts, and mobile browser tab suspensions.
+    If this fails for any reason, the user still gets logged in for the
+    current visit - they just won't be remembered on reload."""
+    try:
+        token = create_session(username)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DURATION_DAYS)
+        cookie_manager.set(
+            SESSION_COOKIE_NAME,
+            token,
+            expires_at=expires_at,
+            key="set_session_cookie",
+        )
+    except Exception as e:
+        st.warning(
+            "Couldn't set up 'stay logged in' for this device "
+            f"(you're still logged in for now). Details: {e}"
+        )
 
 def end_persistent_login():
-    token = cookie_manager.get(SESSION_COOKIE_NAME)
-    if token:
-        delete_session(token)
-    cookie_manager.delete(SESSION_COOKIE_NAME, key="delete_session_cookie")
+    try:
+        token = cookie_manager.get(SESSION_COOKIE_NAME)
+        if token:
+            delete_session(token)
+        cookie_manager.delete(SESSION_COOKIE_NAME, key="delete_session_cookie")
+    except Exception:
+        pass
 
 
 # ==================================================
@@ -209,7 +232,10 @@ for key, default in [
 # ==================================================
 
 if not st.session_state.logged_in:
-    saved_token = cookie_manager.get(SESSION_COOKIE_NAME)
+    try:
+        saved_token = cookie_manager.get(SESSION_COOKIE_NAME)
+    except Exception:
+        saved_token = None
     if saved_token:
         remembered_username = validate_session(saved_token)
         if remembered_username:
