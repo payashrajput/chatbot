@@ -1,7 +1,11 @@
 import os
 import time
+import secrets
 import hashlib
+from datetime import datetime, timedelta, timezone
+
 import streamlit as st
+import extra_streamlit_components as stx
 from supabase import create_client, Client
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -13,8 +17,12 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 st.set_page_config(
     page_title="KITTU AI",
     page_icon="🤖",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+SESSION_COOKIE_NAME = "kittu_session_token"
+SESSION_DURATION_DAYS = 30
 
 # ==================================================
 # SUPABASE CLIENT
@@ -29,6 +37,23 @@ def get_supabase() -> Client:
         st.stop()
     return create_client(url, key)
 
+
+# ==================================================
+# COOKIE MANAGER (this is what fixes the "logs out on
+# every reload / mobile app switch" problem — Streamlit's
+# session_state is wiped whenever the browser reconnects,
+# so we store a long-lived session token in an actual
+# browser cookie and re-validate it against Supabase on
+# every load).
+# ==================================================
+
+@st.cache_resource
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
+
+
 # ==================================================
 # AUTH HELPERS
 # ==================================================
@@ -40,10 +65,11 @@ def register_user(username: str, password: str) -> tuple[bool, str]:
     username = username.strip().lower()
     if not username or not password:
         return False, "Username and password cannot be empty."
+    if len(username) < 3:
+        return False, "Username must be at least 3 characters."
     if len(password) < 4:
         return False, "Password must be at least 4 characters."
     sb = get_supabase()
-    # Check if exists
     res = sb.table("users").select("username").eq("username", username).execute()
     if res.data:
         return False, "Username already exists. Please choose another."
@@ -52,11 +78,79 @@ def register_user(username: str, password: str) -> tuple[bool, str]:
 
 def verify_user(username: str, password: str) -> bool:
     username = username.strip().lower()
+    if not username or not password:
+        return False
     sb = get_supabase()
     res = sb.table("users").select("password_hash").eq("username", username).execute()
     if not res.data:
         return False
     return res.data[0]["password_hash"] == hash_pw(password)
+
+
+# ==================================================
+# PERSISTENT SESSION HELPERS (Supabase "sessions" table)
+#
+# Required Supabase table (run once in the SQL editor):
+#
+#   create table sessions (
+#     token text primary key,
+#     username text not null,
+#     created_at timestamptz default now(),
+#     expires_at timestamptz not null
+#   );
+#
+# ==================================================
+
+def create_session(username: str) -> str:
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=SESSION_DURATION_DAYS)).isoformat()
+    sb = get_supabase()
+    sb.table("sessions").insert({
+        "token": token,
+        "username": username,
+        "expires_at": expires_at,
+    }).execute()
+    return token
+
+def validate_session(token: str):
+    if not token:
+        return None
+    sb = get_supabase()
+    res = sb.table("sessions").select("username, expires_at").eq("token", token).execute()
+    if not res.data:
+        return None
+    row = res.data[0]
+    expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+    if expires_at < datetime.now(timezone.utc):
+        delete_session(token)
+        return None
+    return row["username"]
+
+def delete_session(token: str):
+    if not token:
+        return
+    sb = get_supabase()
+    sb.table("sessions").delete().eq("token", token).execute()
+
+
+def start_persistent_login(username: str):
+    """Create a session row + browser cookie so the user stays logged in
+    across page reloads, app restarts, and mobile browser tab suspensions."""
+    token = create_session(username)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DURATION_DAYS)
+    cookie_manager.set(
+        SESSION_COOKIE_NAME,
+        token,
+        expires_at=expires_at,
+        key="set_session_cookie",
+    )
+
+def end_persistent_login():
+    token = cookie_manager.get(SESSION_COOKIE_NAME)
+    if token:
+        delete_session(token)
+    cookie_manager.delete(SESSION_COOKIE_NAME, key="delete_session_cookie")
+
 
 # ==================================================
 # CHAT HISTORY HELPERS
@@ -79,11 +173,10 @@ def save_chat_entry(username: str, title: str, messages: list, row_id=None):
           .eq("id", row_id) \
           .execute()
         return row_id
-    else:
-        res = sb.table("chat_history") \
-                .insert({"username": username, "title": title, "messages": messages}) \
-                .execute()
-        return res.data[0]["id"] if res.data else None
+    res = sb.table("chat_history") \
+            .insert({"username": username, "title": title, "messages": messages}) \
+            .execute()
+    return res.data[0]["id"] if res.data else None
 
 def delete_all_history(username: str):
     sb = get_supabase()
@@ -92,6 +185,7 @@ def delete_all_history(username: str):
 def delete_chat_entry(row_id):
     sb = get_supabase()
     sb.table("chat_history").delete().eq("id", row_id).execute()
+
 
 # ==================================================
 # SESSION STATE INIT
@@ -102,11 +196,29 @@ for key, default in [
     ("username", ""),
     ("auth_mode", "login"),
     ("messages", []),
-    ("chat_history", []),       # list of {id, title, messages}
-    ("current_chat_id", None),  # supabase row id
+    ("chat_history", []),
+    ("current_chat_id", None),
+    ("confirm_clear_all", False),
+    ("confirm_delete_chat", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+# ==================================================
+# AUTO-LOGIN FROM COOKIE (runs on every fresh page load)
+# ==================================================
+
+if not st.session_state.logged_in:
+    saved_token = cookie_manager.get(SESSION_COOKIE_NAME)
+    if saved_token:
+        remembered_username = validate_session(saved_token)
+        if remembered_username:
+            st.session_state.logged_in = True
+            st.session_state.username = remembered_username
+            st.session_state.chat_history = load_user_history(remembered_username)
+            st.session_state.messages = []
+            st.session_state.current_chat_id = None
+            st.rerun()
 
 # ==================================================
 # CHAT HELPERS
@@ -115,10 +227,11 @@ for key, default in [
 def _flush_current_chat():
     if not st.session_state.messages:
         return
-    title = next(
-        (m["content"][:50] for m in st.session_state.messages if m["role"] == "user"),
+    first_user_msg = next(
+        (m["content"] for m in st.session_state.messages if m["role"] == "user"),
         "New Chat"
     )
+    title = first_user_msg[:47] + "..." if len(first_user_msg) > 47 else first_user_msg
     new_id = save_chat_entry(
         st.session_state.username,
         title,
@@ -126,7 +239,6 @@ def _flush_current_chat():
         row_id=st.session_state.current_chat_id
     )
     st.session_state.current_chat_id = new_id
-    # Refresh local cache
     st.session_state.chat_history = load_user_history(st.session_state.username)
 
 def start_new_chat():
@@ -135,54 +247,85 @@ def start_new_chat():
     st.session_state.messages        = []
     st.session_state.current_chat_id = None
 
+
 # ==================================================
 # LOGIN / REGISTER SCREEN
 # ==================================================
 
 def show_auth_screen():
-    st.title("🤖 KITTU AI")
+    st.markdown(
+        "<h1 style='text-align:center;'>🤖 KITTU AI</h1>"
+        "<p style='text-align:center;color:gray;'>Your personal AI assistant</p>",
+        unsafe_allow_html=True,
+    )
     _, col, _ = st.columns([1, 1.2, 1])
     with col:
-        mode = st.session_state.auth_mode
-        st.markdown(f"### {'🔐 Login' if mode == 'login' else '📝 Create Account'}")
+        with st.container(border=True):
+            mode = st.session_state.auth_mode
+            st.markdown(f"#### {'🔐 Log in' if mode == 'login' else '📝 Create your account'}")
 
-        username = st.text_input("Username", key="auth_username")
-        password = st.text_input("Password", type="password", key="auth_password")
+            username = st.text_input("Username", key="auth_username", placeholder="e.g. kittu_fan")
+            password = st.text_input("Password", type="password", key="auth_password", placeholder="At least 4 characters")
 
-        if mode == "login":
-            if st.button("Login", use_container_width=True, type="primary"):
-                if verify_user(username, password):
-                    st.session_state.logged_in       = True
-                    st.session_state.username        = username.strip().lower()
-                    st.session_state.chat_history    = load_user_history(st.session_state.username)
-                    st.session_state.messages        = []
-                    st.session_state.current_chat_id = None
+            if mode == "login":
+                remember = st.checkbox("Keep me logged in on this device", value=True)
+
+                if st.button("Log in", use_container_width=True, type="primary"):
+                    if not username or not password:
+                        st.warning("⚠️ Please enter both a username and a password.")
+                    else:
+                        with st.spinner("Signing you in..."):
+                            ok = verify_user(username, password)
+                        if ok:
+                            clean_username = username.strip().lower()
+                            st.session_state.logged_in       = True
+                            st.session_state.username        = clean_username
+                            st.session_state.chat_history    = load_user_history(clean_username)
+                            st.session_state.messages        = []
+                            st.session_state.current_chat_id = None
+                            if remember:
+                                start_persistent_login(clean_username)
+                            st.rerun()
+                        else:
+                            st.error("❌ Wrong username or password.")
+
+                st.markdown("---")
+                st.caption("Don't have an account yet?")
+                if st.button("Create an account", use_container_width=True):
+                    st.session_state.auth_mode = "register"
                     st.rerun()
-                else:
-                    st.error("❌ Wrong username or password.")
-            st.markdown("---")
-            st.caption("Don't have an account?")
-            if st.button("Create Account", use_container_width=True):
-                st.session_state.auth_mode = "register"
-                st.rerun()
-        else:
-            if st.button("Register", use_container_width=True, type="primary"):
-                ok, msg = register_user(username, password)
-                if ok:
-                    st.success(f"✅ {msg}")
+            else:
+                if st.button("Register", use_container_width=True, type="primary"):
+                    if len(password) < 4:
+                        st.error("❌ Password must be at least 4 characters.")
+                    else:
+                        with st.spinner("Creating your account..."):
+                            ok, msg = register_user(username, password)
+                        if ok:
+                            st.success(f"✅ {msg}")
+                            st.session_state.auth_mode = "login"
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+
+                st.markdown("---")
+                st.caption("Already have an account?")
+                if st.button("Back to login", use_container_width=True):
                     st.session_state.auth_mode = "login"
                     st.rerun()
-                else:
-                    st.error(f"❌ {msg}")
-            st.markdown("---")
-            st.caption("Already have an account?")
-            if st.button("Back to Login", use_container_width=True):
-                st.session_state.auth_mode = "login"
-                st.rerun()
+
 
 # ==================================================
 # MODEL
 # ==================================================
+
+MODEL_LABELS = {
+    "⚡ Llama 3.1 8B — fast & lightweight": "meta-llama/Llama-3.1-8B-Instruct",
+    "🧠 Qwen 2.5 72B — powerful & detailed": "Qwen/Qwen2.5-72B-Instruct",
+    "🌀 Mistral 7B v0.3 — balanced": "mistralai/Mistral-7B-Instruct-v0.3",
+    "🚀 DeepSeek V3 — cutting edge": "deepseek-ai/DeepSeek-V3-0324",
+}
 
 @st.cache_resource(show_spinner=False)
 def load_llm(repo_id: str):
@@ -199,34 +342,36 @@ def get_chat_model(repo_id, temp, tokens):
     llm.max_new_tokens = tokens
     return ChatHuggingFace(llm=llm)
 
+
 # ==================================================
 # MAIN APP
 # ==================================================
 
 def show_main_app():
-    st.title(f"🤖 KITTU AI  —  👤 {st.session_state.username}")
+    st.markdown(
+        f"<h2>🤖 KITTU AI &nbsp; <span style='font-size:0.6em;color:gray;'>👤 {st.session_state.username}</span></h2>",
+        unsafe_allow_html=True,
+    )
 
     with st.sidebar:
         st.title("⚙️ Settings")
 
-        model_name = st.selectbox("Choose Model", [
-            "meta-llama/Llama-3.1-8B-Instruct",
-            "Qwen/Qwen2.5-72B-Instruct",
-            "mistralai/Mistral-7B-Instruct-v0.3",
-            "deepseek-ai/DeepSeek-V3-0324",
-        ])
-        temperature    = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
-        max_new_tokens = st.slider("Max Tokens",  128, 4096, 1024)
+        with st.expander("🧩 Model options", expanded=False):
+            model_label   = st.selectbox("Choose model", list(MODEL_LABELS.keys()))
+            model_name    = MODEL_LABELS[model_label]
+            temperature   = st.slider("Creativity (temperature)", 0.0, 2.0, 0.7, 0.1,
+                                       help="Lower = more focused, higher = more creative/random")
+            max_new_tokens = st.slider("Max response length", 128, 4096, 1024)
 
         st.divider()
 
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("➕ New Chat", use_container_width=True):
+            if st.button("➕ New chat", use_container_width=True):
                 start_new_chat()
                 st.rerun()
         with c2:
-            if st.button("🗑️ Clear", use_container_width=True):
+            if st.button("🗑️ Clear chat", use_container_width=True):
                 if st.session_state.current_chat_id:
                     delete_chat_entry(st.session_state.current_chat_id)
                 st.session_state.messages        = []
@@ -234,49 +379,93 @@ def show_main_app():
                 st.session_state.chat_history    = load_user_history(st.session_state.username)
                 st.rerun()
 
-        if st.button("🧹 Clear All History", use_container_width=True):
-            delete_all_history(st.session_state.username)
-            st.session_state.chat_history    = []
-            st.session_state.messages        = []
-            st.session_state.current_chat_id = None
-            st.success("History cleared!")
-            st.rerun()
+        if not st.session_state.confirm_clear_all:
+            if st.button("🧹 Clear all history", use_container_width=True):
+                st.session_state.confirm_clear_all = True
+                st.rerun()
+        else:
+            st.warning("Delete **all** saved chats? This can't be undone.")
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                if st.button("✅ Yes, delete", use_container_width=True):
+                    delete_all_history(st.session_state.username)
+                    st.session_state.chat_history       = []
+                    st.session_state.messages           = []
+                    st.session_state.current_chat_id    = None
+                    st.session_state.confirm_clear_all  = False
+                    st.toast("History cleared!", icon="✅")
+                    st.rerun()
+            with cc2:
+                if st.button("Cancel", use_container_width=True):
+                    st.session_state.confirm_clear_all = False
+                    st.rerun()
 
         st.divider()
 
-        if st.button("🚪 Logout", use_container_width=True):
+        if st.button("🚪 Log out", use_container_width=True):
             _flush_current_chat()
-            for k in ["logged_in", "username", "messages", "chat_history", "current_chat_id"]:
+            end_persistent_login()
+            for k in ["logged_in", "username", "messages", "chat_history",
+                      "current_chat_id", "confirm_clear_all", "confirm_delete_chat"]:
                 del st.session_state[k]
             st.rerun()
 
+        st.caption("You'll stay logged in on this device even if you close the app, unless you log out.")
+
         st.divider()
-        st.subheader("📜 Chat History")
+        st.subheader("📜 Chat history")
 
         history = st.session_state.chat_history
         if not history:
-            st.caption("No history yet.")
+            st.caption("No saved chats yet — start typing below!")
         else:
             for chat in reversed(history):
                 is_active = (st.session_state.current_chat_id == chat["id"])
-                label     = f"▶ {chat['title']}" if is_active else f"💬 {chat['title']}"
-                if st.button(label, key=f"h_{chat['id']}", use_container_width=True):
-                    _flush_current_chat()
-                    st.session_state.messages        = chat["messages"]
-                    st.session_state.current_chat_id = chat["id"]
-                    st.rerun()
+                row1, row2 = st.columns([5, 1])
+                with row1:
+                    label = f"▶ {chat['title']}" if is_active else f"💬 {chat['title']}"
+                    if st.button(label, key=f"h_{chat['id']}", use_container_width=True):
+                        _flush_current_chat()
+                        st.session_state.messages        = chat["messages"]
+                        st.session_state.current_chat_id = chat["id"]
+                        st.rerun()
+                with row2:
+                    if st.button("🗑️", key=f"del_{chat['id']}"):
+                        st.session_state.confirm_delete_chat = chat["id"]
+                        st.rerun()
+
+            if st.session_state.confirm_delete_chat is not None:
+                st.warning("Delete this chat?")
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    if st.button("✅ Delete", key="confirm_del_yes", use_container_width=True):
+                        delete_chat_entry(st.session_state.confirm_delete_chat)
+                        if st.session_state.current_chat_id == st.session_state.confirm_delete_chat:
+                            st.session_state.messages        = []
+                            st.session_state.current_chat_id = None
+                        st.session_state.chat_history = load_user_history(st.session_state.username)
+                        st.session_state.confirm_delete_chat = None
+                        st.rerun()
+                with dc2:
+                    if st.button("Cancel", key="confirm_del_no", use_container_width=True):
+                        st.session_state.confirm_delete_chat = None
+                        st.rerun()
 
     model = get_chat_model(model_name, temperature, max_new_tokens)
 
+    if not st.session_state.messages:
+        st.info("💡 Ask me anything to get started — try a question, a task, or paste some text to work on.")
+
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
+        avatar = "🧑" if msg["role"] == "user" else "🤖"
+        with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
     prompt = st.chat_input("Ask me anything...")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar="🧑"):
             st.markdown(prompt)
 
         conversation = [SystemMessage(content="You are KITTU AI, a helpful and friendly assistant.")]
@@ -286,7 +475,7 @@ def show_main_app():
             else:
                 conversation.append(AIMessage(content=m["content"]))
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🤖"):
             placeholder = st.empty()
             placeholder.markdown("⏳ Thinking...")
             try:
@@ -299,11 +488,12 @@ def show_main_app():
                     time.sleep(0.008)
                 placeholder.markdown(streamed)
             except Exception as e:
-                answer = f"❌ Error: {str(e)}"
+                answer = f"❌ Sorry, something went wrong: {str(e)}"
                 placeholder.error(answer)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
         _flush_current_chat()
+
 
 # ==================================================
 # ROUTER
