@@ -150,33 +150,45 @@ def delete_session(token: str):
 
 
 def start_persistent_login(username: str):
-    """Create a session row + browser cookie so the user stays logged in
-    across page reloads, app restarts, and mobile browser tab suspensions.
-    If this fails for any reason, the user still gets logged in for the
-    current visit - they just won't be remembered on reload."""
+    token = create_session(username)
+
+    # Save token in URL
+    st.query_params["session"] = token
+
     try:
-        token = create_session(username)
         expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DURATION_DAYS)
+
         cookie_manager.set(
             SESSION_COOKIE_NAME,
             token,
             expires_at=expires_at,
             key="set_session_cookie",
         )
-    except Exception as e:
-        st.warning(
-            "Couldn't set up 'stay logged in' for this device "
-            f"(you're still logged in for now). Details: {e}"
-        )
+    except Exception:
+        pass
 
 def end_persistent_login():
     try:
         token = cookie_manager.get(SESSION_COOKIE_NAME)
+
         if token:
             delete_session(token)
-        cookie_manager.delete(SESSION_COOKIE_NAME, key="delete_session_cookie")
+
+        cookie_manager.delete(
+            SESSION_COOKIE_NAME,
+            key="delete_session_cookie",
+        )
+
     except Exception:
         pass
+
+    qp_token = st.query_params.get("session")
+
+    if qp_token:
+        delete_session(qp_token)
+
+    if "session" in st.query_params:
+        del st.query_params["session"]
 
 
 # ==================================================
@@ -236,15 +248,18 @@ for key, default in [
 # ==================================================
 
 if not st.session_state.logged_in:
-    try:
-        cookies = cookie_manager.get_all()
 
-        saved_token = None
-        if cookies:
-            saved_token = cookies.get(SESSION_COOKIE_NAME)
+    # Try URL first
+    saved_token = st.query_params.get("session")
 
-    except Exception:
-        saved_token = None
+    # If URL has no token, try cookie
+    if not saved_token:
+        try:
+            cookies = cookie_manager.get_all()
+            if cookies:
+                saved_token = cookies.get(SESSION_COOKIE_NAME)
+        except Exception:
+            saved_token = None
 
     if saved_token:
         remembered_username = validate_session(saved_token)
@@ -255,6 +270,10 @@ if not st.session_state.logged_in:
             st.session_state.chat_history = load_user_history(remembered_username)
             st.session_state.messages = []
             st.session_state.current_chat_id = None
+
+            # Keep URL updated
+            st.query_params["session"] = saved_token
+
             st.rerun()
 
 # ==================================================
