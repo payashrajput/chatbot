@@ -545,7 +545,8 @@ def show_main_app():
 if not st.session_state.logged_in:
     show_auth_screen()
 else:
-    show_main_app()import os
+    show_main_app()
+import os
 import hashlib
 import streamlit as st
 from supabase import create_client, Client
