@@ -56,6 +56,10 @@ def get_cookie_manager():
     return stx.CookieManager(key="kittu_cookie_manager")
 
 cookie_manager = get_cookie_manager()
+cookies = cookie_manager.get_all()
+
+if cookies is None:
+    st.stop()
 
 
 # ==================================================
@@ -233,11 +237,18 @@ for key, default in [
 
 if not st.session_state.logged_in:
     try:
-        saved_token = cookie_manager.get(SESSION_COOKIE_NAME)
+        cookies = cookie_manager.get_all()
+
+        saved_token = None
+        if cookies:
+            saved_token = cookies.get(SESSION_COOKIE_NAME)
+
     except Exception:
         saved_token = None
+
     if saved_token:
         remembered_username = validate_session(saved_token)
+
         if remembered_username:
             st.session_state.logged_in = True
             st.session_state.username = remembered_username
