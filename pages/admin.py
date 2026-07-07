@@ -251,8 +251,8 @@ if not st.session_state.logged_in:
             cookies = cookie_manager.get_all()
 
             saved_token = None
-        if cookies:
-            saved_token = cookies.get(SESSION_COOKIE_NAME)
+            if cookies:
+                saved_token = cookies.get(SESSION_COOKIE_NAME)
         except Exception:
             saved_token = None
     if saved_token:
