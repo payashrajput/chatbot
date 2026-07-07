@@ -54,8 +54,13 @@ def get_cookie_manager():
     # CachedWidgetWarning / behave unpredictably. The component manages its
     # own state across reruns on its own, so caching isn't needed here.
     return stx.CookieManager(key="kittu_cookie_manager")
-
 cookie_manager = get_cookie_manager()
+
+# Wait until cookies are available
+cookies = cookie_manager.get_all()
+
+if cookies is None:
+    st.stop()
 
 
 # ==================================================
@@ -243,7 +248,11 @@ if not st.session_state.logged_in:
     saved_token = st.query_params.get("session")
     if not saved_token:
         try:
-            saved_token = cookie_manager.get(SESSION_COOKIE_NAME)
+            cookies = cookie_manager.get_all()
+
+            saved_token = None
+        if cookies:
+            saved_token = cookies.get(SESSION_COOKIE_NAME)
         except Exception:
             saved_token = None
     if saved_token:
