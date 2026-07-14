@@ -15,7 +15,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 # ==================================================
 
 st.set_page_config(
-    page_title="KITTU AI",
+    page_title="KITTU AI CHATBOT",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
