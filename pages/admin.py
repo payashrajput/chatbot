@@ -8,7 +8,7 @@ from supabase import create_client, Client
 # ==================================================
 
 st.set_page_config(
-    page_title=" KITTU AI — Admin",
+    page_title="KITTU AI — Admin",
     page_icon="🛡️",
     layout="wide"
 )
