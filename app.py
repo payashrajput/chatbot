@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import secrets
 import hashlib
 from datetime import datetime, timedelta, timezone
@@ -32,7 +33,7 @@ def get_supabase() -> Client:
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_KEY", "")
     if not url or not key:
-        st.error("❌ SUPABASE_URL and SUPABASE_KEY secrets are not set. Please add them in HuggingFace Space settings.")
+        st.error("❌ SUPABASE_URL and SUPABASE_KEY secrets are not set. Please add them in Render Environment settings.")
         st.stop()
     return create_client(url, key)
 
@@ -376,35 +377,80 @@ def show_auth_screen():
 # ==================================================
 
 MODEL_LABELS = {
-    "✨ Gemini 3.8 Flash — recommended general chat": "gemini-3.8-flash",
-    "⚡ Gemini 3.5 Flash-Lite — faster, lighter": "gemini-3.5-flash-lite",
+    "✨ Gemini 3.8 Flash — recommended": "gemini-3.8-flash",
+    "⚡ Gemini 3.5 Flash-Lite — lightweight": "gemini-3.5-flash-lite",
 }
 
 
 @st.cache_resource(show_spinner=False)
 def get_gemini_client():
-    # Add GEMINI_API_KEY in Render → Environment.
-    token = os.getenv("GEMINI_API_KEY")
-    if not token or not token.strip():
+    # Set GEMINI_API_KEY in Render → Environment. Never hard-code the key.
+    token = os.getenv("GEMINI_API_KEY", "").strip()
+    if not token:
         raise RuntimeError(
-            "GEMINI_API_KEY is missing. Add a Gemini API key in Render Environment."
+            "GEMINI_API_KEY is missing. Add it in Render → your service → Environment."
         )
     return OpenAI(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        api_key=token.strip(),
+        api_key=token,
+        # Our retry loop below controls retries and avoids duplicate SDK retries.
+        max_retries=0,
+        timeout=60.0,
     )
 
 
 def generate_answer(model_id: str, messages: list, temperature: float, tokens: int) -> str:
+    """Call Gemini and retry temporary server overloads with exponential backoff."""
     client = get_gemini_client()
-    response = client.chat.completions.create(
-        model=model_id,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=tokens,
-    )
-    content = response.choices[0].message.content
-    return content or ""
+    last_error = None
+
+    for attempt in range(4):
+        try:
+            response = client.chat.completions.create(
+                model=model_id,
+                messages=messages,
+                # Gemini API supports temperature from 0 to 1.
+                temperature=max(0.0, min(float(temperature), 1.0)),
+                max_tokens=int(tokens),
+            )
+            content = response.choices[0].message.content
+            if not content:
+                return "The model returned an empty response. Please try again."
+            return content.strip()
+
+        except Exception as exc:
+            last_error = exc
+            status = getattr(exc, "status_code", None)
+
+            # Retry only transient server errors. Do not retry authentication,
+            # billing, invalid-model, or quota errors.
+            if status not in (500, 502, 503, 504) or attempt == 3:
+                if status == 503:
+                    raise RuntimeError(
+                        "Gemini is temporarily overloaded (503). Please wait a little "
+                        "and try again. If this persists, try the other model in Settings."
+                    ) from exc
+                if status == 429:
+                    raise RuntimeError(
+                        "Gemini rate limit or quota reached (429). Wait for the quota "
+                        "to reset or check your Google AI Studio project limits."
+                    ) from exc
+                if status in (401, 403):
+                    raise RuntimeError(
+                        "Gemini rejected the API key (401/403). Check GEMINI_API_KEY "
+                        "in Render Environment and verify the key is active."
+                    ) from exc
+                if status == 404:
+                    raise RuntimeError(
+                        f"Gemini model '{model_id}' was not found or is unavailable "
+                        "for this API key. Choose another listed model."
+                    ) from exc
+                raise
+
+            # Exponential backoff plus small jitter: 1s, 2s, 4s (approximately).
+            time.sleep((2 ** attempt) + random.uniform(0, 0.4))
+
+    raise RuntimeError("Gemini request failed after retries.") from last_error
 
 
 
@@ -425,7 +471,7 @@ def show_main_app():
         with st.expander("🧩 Model options", expanded=False):
             model_label   = st.selectbox("Choose model", list(MODEL_LABELS.keys()))
             model_name    = MODEL_LABELS[model_label]
-            temperature   = st.slider("Creativity (temperature)", 0.0, 2.0, 0.7, 0.1,
+            temperature   = st.slider("Creativity (temperature)", 0.0, 1.0, 0.7, 0.1,
                                        help="Lower = more focused, higher = more creative/random")
             max_new_tokens = st.slider("Max response length", 128, 4096, 1024)
 
