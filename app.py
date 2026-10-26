@@ -377,8 +377,9 @@ def show_auth_screen():
 # ==================================================
 
 MODEL_LABELS = {
-    "✨ Gemini 3.8 Flash — recommended": "gemini-3.8-flash",
-    "⚡ Gemini 3.5 Flash-Lite — lightweight": "gemini-3.5-flash-lite",
+    # Prefer the lighter model for a snappier response; switch in Settings if needed.
+    "⚡ Gemini 3.5 Flash-Lite — recommended": "gemini-3.5-flash-lite",
+    "✨ Gemini 3.8 Flash — advanced (may be busy)": "gemini-3.8-flash",
 }
 
 
@@ -395,64 +396,72 @@ def get_gemini_client():
         api_key=token,
         # Our retry loop below controls retries and avoids duplicate SDK retries.
         max_retries=0,
-        timeout=60.0,
+        timeout=120.0,
     )
 
 
 def generate_answer(model_id: str, messages: list, temperature: float, tokens: int) -> str:
-    """Call Gemini and retry temporary server overloads with exponential backoff."""
+    """Retry temporary Gemini failures, then try the other configured model."""
     client = get_gemini_client()
+    fallback_model = "gemini-3.8-flash" if model_id != "gemini-3.8-flash" else "gemini-3.5-flash-lite"
+    models_to_try = [model_id, fallback_model]
     last_error = None
 
-    for attempt in range(4):
-        try:
-            response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                # Gemini API supports temperature from 0 to 1.
-                temperature=max(0.0, min(float(temperature), 1.0)),
-                max_tokens=int(tokens),
-            )
-            content = response.choices[0].message.content
-            if not content:
-                return "The model returned an empty response. Please try again."
-            return content.strip()
+    for model_index, current_model in enumerate(models_to_try):
+        for attempt in range(3):
+            try:
+                response = client.chat.completions.create(
+                    model=current_model,
+                    messages=messages,
+                    temperature=max(0.0, min(float(temperature), 1.0)),
+                    max_tokens=int(tokens),
+                )
+                content = response.choices[0].message.content
+                if not content:
+                    return "The model returned an empty response. Please try again."
+                return content.strip()
+            except Exception as exc:
+                last_error = exc
+                status = getattr(exc, "status_code", None)
+                error_type = type(exc).__name__.lower()
+                is_timeout = "timeout" in error_type or "timedout" in error_type
+                retryable = status in (500, 502, 503, 504) or is_timeout
 
-        except Exception as exc:
-            last_error = exc
-            status = getattr(exc, "status_code", None)
-
-            # Retry only transient server errors. Do not retry authentication,
-            # billing, invalid-model, or quota errors.
-            if status not in (500, 502, 503, 504) or attempt == 3:
-                if status == 503:
-                    raise RuntimeError(
-                        "Gemini is temporarily overloaded (503). Please wait a little "
-                        "and try again. If this persists, try the other model in Settings."
-                    ) from exc
+                # Authentication, invalid model, and quota errors should be shown clearly,
+                # not retried repeatedly.
                 if status == 429:
                     raise RuntimeError(
-                        "Gemini rate limit or quota reached (429). Wait for the quota "
-                        "to reset or check your Google AI Studio project limits."
+                        "Gemini rate limit/quota reached (429). Check Google AI Studio usage and limits."
                     ) from exc
                 if status in (401, 403):
                     raise RuntimeError(
-                        "Gemini rejected the API key (401/403). Check GEMINI_API_KEY "
-                        "in Render Environment and verify the key is active."
+                        "Gemini rejected the API key (401/403). Check GEMINI_API_KEY in Render Environment."
                     ) from exc
                 if status == 404:
                     raise RuntimeError(
-                        f"Gemini model '{model_id}' was not found or is unavailable "
-                        "for this API key. Choose another listed model."
+                        f"Gemini model '{current_model}' is unavailable. Choose another model in Settings."
                     ) from exc
-                raise
 
-            # Exponential backoff plus small jitter: 1s, 2s, 4s (approximately).
-            time.sleep((2 ** attempt) + random.uniform(0, 0.4))
+                if not retryable or attempt == 2:
+                    break
+                # Backoff: about 1, 2 seconds; avoid hammering a busy service.
+                time.sleep((2 ** attempt) + random.uniform(0, 0.5))
 
-    raise RuntimeError("Gemini request failed after retries.") from last_error
+        # If primary is overloaded/timing out, the second pass tries the alternate model.
+        if model_index == 0:
+            continue
 
-
+    status = getattr(last_error, "status_code", None)
+    if status == 503:
+        raise RuntimeError(
+            "Gemini is currently overloaded (503). The app retried and tried its alternate model, "
+            "but both attempts failed. Wait briefly and try again."
+        ) from last_error
+    if last_error and ("timeout" in type(last_error).__name__.lower()):
+        raise RuntimeError(
+            "Gemini timed out even after retries. Try a shorter prompt or lower Max response length in Settings."
+        ) from last_error
+    raise RuntimeError(f"Gemini request failed after retries: {last_error}") from last_error
 
 
 # ==================================================
