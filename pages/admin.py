@@ -8,7 +8,7 @@ from supabase import create_client, Client
 # ==================================================
 
 st.set_page_config(
-    page_title="KITTU AI — Admin",
+    page_title="AI ChatBot — Admin",
     page_icon="🛡️",
     layout="wide"
 )
@@ -122,7 +122,7 @@ if "admin_login_attempts" not in st.session_state:
 # ==================================================
 
 def show_login():
-    st.title("🛡️ Admin Panel — KITTU AI")
+    st.title("🛡️ Admin Panel —AI ChatBot")
     _, col, _ = st.columns([1, 1.2, 1])
     with col:
         st.markdown("### 🔐 Admin Login")
@@ -148,7 +148,7 @@ def show_login():
 # ==================================================
 
 def show_dashboard():
-    st.title("🛡️ Admin Panel — KITTU AI")
+    st.title("🛡️ Admin Panel — AI ChatBot")
 
     with st.sidebar:
         st.success(f"👤 **{st.session_state.admin_username}**")
