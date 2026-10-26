@@ -7,8 +7,7 @@ from datetime import datetime, timedelta, timezone
 import streamlit as st
 import extra_streamlit_components as stx
 from supabase import create_client, Client
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from openai import OpenAI
 
 # ==================================================
 # PAGE CONFIG
@@ -390,19 +389,32 @@ MODEL_LABELS = {
         "deepseek-ai/DeepSeek-R1",
 }
 @st.cache_resource(show_spinner=False)
-def load_llm(repo_id: str):
-    return HuggingFaceEndpoint(
-        repo_id=repo_id,
-        task="text-generation",
-        temperature=0.7,
-        max_new_tokens=1024,
+def get_hf_client():
+    # Configure HF_TOKEN in Render's Environment settings.
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    if not token or not token.strip():
+        raise RuntimeError(
+            "HF_TOKEN is missing. Add a Hugging Face token with "
+            "'Make calls to Inference Providers' permission in Render Environment."
+        )
+    return OpenAI(
+        base_url="https://router.huggingface.co/v1",
+        api_key=token.strip(),
     )
 
-def get_chat_model(repo_id, temp, tokens):
-    llm = load_llm(repo_id)
-    llm.temperature    = temp
-    llm.max_new_tokens = tokens
-    return ChatHuggingFace(llm=llm)
+
+def generate_answer(repo_id: str, messages: list, temperature: float, tokens: int) -> str:
+    client = get_hf_client()
+    response = client.chat.completions.create(
+        model=repo_id,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=tokens,
+    )
+    content = response.choices[0].message.content
+    return content or ""
+
+
 
 
 # ==================================================
@@ -513,8 +525,6 @@ def show_main_app():
                         st.session_state.confirm_delete_chat = None
                         st.rerun()
 
-    model = get_chat_model(model_name, temperature, max_new_tokens)
-
     if not st.session_state.messages:
         st.info("💡 Ask me anything to get started — try a question, a task, or paste some text to work on.")
 
@@ -530,19 +540,21 @@ def show_main_app():
         with st.chat_message("user", avatar="🧑"):
             st.markdown(prompt)
 
-        conversation = [SystemMessage(content="You are AI ChatBot, a helpful and friendly assistant.")]
-        for m in st.session_state.messages:
-            if m["role"] == "user":
-                conversation.append(HumanMessage(content=m["content"]))
-            else:
-                conversation.append(AIMessage(content=m["content"]))
+        conversation = [
+            {"role": "system", "content": "You are AI ChatBot, a helpful and friendly assistant."}
+        ]
+        conversation.extend(
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages
+        )
 
         with st.chat_message("assistant", avatar="🤖"):
             placeholder = st.empty()
             placeholder.markdown("⏳ Thinking...")
             try:
-                response = model.invoke(conversation)
-                answer   = response.content.strip()
+                answer = generate_answer(
+                    model_name, conversation, temperature, max_new_tokens
+                ).strip()
                 streamed = ""
                 for char in answer:
                     streamed += char
