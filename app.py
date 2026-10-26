@@ -310,7 +310,7 @@ def start_new_chat():
 
 def show_auth_screen():
     st.markdown(
-        "<h1 style='text-align:center;'>🤖 KITTU AI</h1>"
+        "<h1 style='text-align:center;'>🤖 AI ChatBot</h1>"
         "<p style='text-align:center;color:gray;'>Your personal AI assistant</p>",
         unsafe_allow_html=True,
     )
@@ -524,7 +524,7 @@ def show_main_app():
         with st.chat_message("user", avatar="🧑"):
             st.markdown(prompt)
 
-        conversation = [SystemMessage(content="You are KITTU AI, a helpful and friendly assistant.")]
+        conversation = [SystemMessage(content="You are AI ChatBot, a helpful and friendly assistant.")]
         for m in st.session_state.messages:
             if m["role"] == "user":
                 conversation.append(HumanMessage(content=m["content"]))
