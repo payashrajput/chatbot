@@ -15,7 +15,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 # ==================================================
 
 st.set_page_config(
-    page_title="KITTU AI CHATBOT",
+    page_title="AI CHATBOT",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -320,7 +320,7 @@ def show_auth_screen():
             mode = st.session_state.auth_mode
             st.markdown(f"#### {'🔐 Log in' if mode == 'login' else '📝 Create your account'}")
 
-            username = st.text_input("Username", key="auth_username", placeholder="e.g. kittu_fan")
+            username = st.text_input("Username", key="auth_username", placeholder="e.g. username")
             password = st.text_input("Password", type="password", key="auth_password", placeholder="At least 4 characters")
 
             if mode == "login":
@@ -405,7 +405,7 @@ def get_chat_model(repo_id, temp, tokens):
 
 def show_main_app():
     st.markdown(
-        f"<h2>🤖 KITTU AI &nbsp; <span style='font-size:0.6em;color:gray;'>👤 {st.session_state.username}</span></h2>",
+        f"<h2>🤖 AI ChatBot &nbsp; <span style='font-size:0.6em;color:gray;'>👤 {st.session_state.username}</span></h2>",
         unsafe_allow_html=True,
     )
 
