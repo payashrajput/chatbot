@@ -376,37 +376,29 @@ def show_auth_screen():
 # ==================================================
 
 MODEL_LABELS = {
-    "⚡ Qwen3 4B Thinking — lightweight reasoning":
-        "Qwen/Qwen3-4B-Thinking-2507",
-
-    "💻 Qwen3 Coder 480B — advanced coding":
-        "Qwen/Qwen3-Coder-480B-A35B-Instruct:cheapest",
-
-    "🧠 GPT OSS 120B — general-purpose":
-        "openai/gpt-oss-120b:cheapest",
-
-    "🔍 DeepSeek R1 — deep reasoning":
-        "deepseek-ai/DeepSeek-R1",
+    "✨ Gemini 3.8 Flash — recommended general chat": "gemini-3.8-flash",
+    "⚡ Gemini 3.5 Flash-Lite — faster, lighter": "gemini-3.5-flash-lite",
 }
+
+
 @st.cache_resource(show_spinner=False)
-def get_hf_client():
-    # Configure HF_TOKEN in Render's Environment settings.
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+def get_gemini_client():
+    # Add GEMINI_API_KEY in Render → Environment.
+    token = os.getenv("GEMINI_API_KEY")
     if not token or not token.strip():
         raise RuntimeError(
-            "HF_TOKEN is missing. Add a Hugging Face token with "
-            "'Make calls to Inference Providers' permission in Render Environment."
+            "GEMINI_API_KEY is missing. Add a Gemini API key in Render Environment."
         )
     return OpenAI(
-        base_url="https://router.huggingface.co/v1",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         api_key=token.strip(),
     )
 
 
-def generate_answer(repo_id: str, messages: list, temperature: float, tokens: int) -> str:
-    client = get_hf_client()
+def generate_answer(model_id: str, messages: list, temperature: float, tokens: int) -> str:
+    client = get_gemini_client()
     response = client.chat.completions.create(
-        model=repo_id,
+        model=model_id,
         messages=messages,
         temperature=temperature,
         max_tokens=tokens,
