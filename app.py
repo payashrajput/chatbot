@@ -377,12 +377,18 @@ def show_auth_screen():
 # ==================================================
 
 MODEL_LABELS = {
-    "⚡ Llama 3.1 8B — fast & lightweight": "meta-llama/Llama-3.1-8B-Instruct",
-    "🧠 Qwen 2.5 72B — powerful & detailed": "Qwen/Qwen2.5-72B-Instruct",
-    "🌀 Mistral 7B v0.3 — balanced": "mistralai/Mistral-7B-Instruct-v0.3",
-    "🚀 DeepSeek V3 — cutting edge": "deepseek-ai/DeepSeek-V3-0324",
-}
+    "⚡ Qwen3 4B Thinking — lightweight reasoning":
+        "Qwen/Qwen3-4B-Thinking-2507",
 
+    "💻 Qwen3 Coder 480B — advanced coding":
+        "Qwen/Qwen3-Coder-480B-A35B-Instruct:cheapest",
+
+    "🧠 GPT OSS 120B — general-purpose":
+        "openai/gpt-oss-120b:cheapest",
+
+    "🔍 DeepSeek R1 — deep reasoning":
+        "deepseek-ai/DeepSeek-R1",
+}
 @st.cache_resource(show_spinner=False)
 def load_llm(repo_id: str):
     return HuggingFaceEndpoint(
